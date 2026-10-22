@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#08080b">
+  <meta name="description" content="Radio Bob，你的私人 AI 电台。">
+  <title>Radio Bob · Your personal radio</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="radio-shell">
+    <header class="station-header">
+      <button class="station-brand profile-open" type="button" aria-label="关于 Radio Bob"><img class="brand-avatar" src="/assets/bob-avatar.svg" alt="Bob 的像素头像"><span class="dot-name">Radio Bob</span></button>
+      <div class="header-actions"><button class="login-button" id="account-button" type="button"><span id="account-label">LOGIN</span></button><div class="theme-switch" role="group" aria-label="外观主题"><button id="theme-dark" type="button" aria-pressed="true">DARK</button><button id="theme-light" type="button" aria-pressed="false">LIGHT</button></div></div>
+    </header>
+
+    <section class="clock-panel" aria-label="电台时钟">
+      <time id="clock" class="pixel-clock" aria-label="当前时间"><span id="clock-hours">--</span><span class="clock-colon" aria-hidden="true">:</span><span id="clock-minutes">--</span></time>
+      <div id="weekday" class="weekday">&nbsp;</div>
+      <div id="calendar-date" class="calendar-date">&nbsp;</div>
+      <span class="air-status" id="air-status"><span class="status-dot"></span><span id="air-label">STANDBY</span></span>
+    </section>
+
+    <section class="player-panel" aria-label="音乐播放器">
+      <div class="player-toolbar">
+        <svg class="icon equalizer-icon" aria-hidden="true"><use href="/assets/icons.svg#i-equalizer"/></svg>
+        <div class="track-meta"><div class="track-title-line"><h1 id="current-title">No track selected</h1><p id="current-artist"></p><span id="preview-badge" class="preview-badge" hidden>试听</span></div><p id="playback-label" class="playback-label">STANDBY</p></div>
+        <div class="transport"><button id="previous" class="round-button" type="button" aria-label="上一首" disabled><svg class="icon"><use href="/assets/icons.svg#i-prev"/></svg></button><button id="play" class="round-button" type="button" aria-label="播放" disabled><svg class="icon"><use id="play-icon" href="/assets/icons.svg#i-play"/></svg></button><button id="next" class="round-button" type="button" aria-label="下一首" disabled><svg class="icon"><use href="/assets/icons.svg#i-next"/></svg></button><button id="stop" class="round-button" type="button" aria-label="停止播放"><svg class="icon"><use href="/assets/icons.svg#i-stop"/></svg></button><button id="favorite" class="round-button favorite-button" type="button" aria-label="收藏当前歌曲" aria-pressed="false"><svg class="icon"><use href="/assets/icons.svg#i-heart"/></svg></button></div>
+        <div class="player-views"><button id="hide-queue" class="pill-button" type="button" aria-expanded="false" aria-controls="library-body">HIDE</button><button id="show-favorites" class="pill-button" type="button" aria-pressed="false">FAV</button></div>
+        <label class="volume-control"><span>VOL</span><input id="volume" type="range" min="0" max="1" step="0.01" value="0.7" aria-label="音乐音量"></label>
+      </div>
+      <div class="progress-row"><span id="elapsed">0:00</span><input id="seek" type="range" min="0" max="1000" value="0" aria-label="播放进度" disabled><span id="duration">0:00</span></div>
+      <p id="player-notice" class="player-notice" role="status" hidden></p>
+    </section>
+
+    <section class="library-panel" aria-label="播放队列">
+      <div class="queue-heading"><button id="queue-tab" class="queue-title active" role="tab" aria-selected="true" aria-controls="queue-panel" type="button">QUEUE</button><span class="queue-total"><span id="queue-count">0</span> TRACKS</span></div>
+    </section>
+
+    <section class="dj-panel" aria-labelledby="dj-heading">
+      <header class="dj-header"><button class="dj-identity profile-open" type="button" aria-label="查看 Bob 的资料"><span class="dj-indicator" aria-hidden="true"><i></i></span><h2 id="dj-heading" class="dot-name">Radio Bob</h2></button><span id="dj-wave" class="dj-wave" aria-hidden="true"><svg class="icon"><use href="/assets/icons.svg#i-sound"/></svg></span><span id="dj-live-label" class="dj-live-label">LIVE</span></header>
+      <div class="conversation">
+        <p id="chat-connection" class="chat-connection" role="status">Connecting to Radio Bob server</p>
+        <div id="conversation-scroll" class="conversation-scroll" tabindex="0" role="region" aria-label="音乐列表与聊天记录">
+          <div id="library-body" hidden>
+            <div class="library-tabs"><button id="search-tab" class="library-tab" role="tab" aria-selected="false" aria-controls="search-panel" type="button"><svg class="icon"><use href="/assets/icons.svg#i-search"/></svg>搜索音乐</button><button id="empty-search" class="library-tab" type="button">找一首喜欢的歌 ↗</button></div>
+            <div id="queue-panel" role="tabpanel" aria-labelledby="queue-tab"><div id="queue-list" class="track-list"></div><div id="queue-empty" class="list-empty"><p>队列还空着。告诉 Bob 你想听什么，或自己找一首。</p></div></div>
+            <div id="search-panel" role="tabpanel" aria-labelledby="search-tab" hidden><form id="search-form" class="search-form"><svg class="icon" aria-hidden="true"><use href="/assets/icons.svg#i-search"/></svg><input id="search-input" type="search" placeholder="歌曲、歌手或专辑" aria-label="搜索网易云音乐" maxlength="200" autocomplete="off"><button type="submit" id="search-submit">SEARCH</button></form><p id="search-status" class="search-status" role="status">搜索结果来自网易云音乐。</p><div id="search-results" class="track-list"></div></div>
+          </div>
+          <div id="messages" class="messages" role="log" aria-label="与 Bob 的对话" aria-live="polite" aria-relevant="additions text"><div id="chat-empty" class="chat-empty"><p>今天，想听点什么？</p><span>一种心情，一个场景，或一首喜欢的歌。</span></div></div>
+        </div>
+        <div id="thinking" class="thinking" role="status" hidden><svg class="icon"><use href="/assets/icons.svg#i-sound"/></svg><span>Bob 正在为你准备音乐…</span></div>
+      </div>
+      <form id="chat-form" class="chat-form"><label for="chat-input" class="sr-only">告诉 Bob 你想听什么</label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Say something to the DJ..."></textarea><button id="mic" class="round-button mic-button" type="button" aria-label="语音输入" aria-pressed="false"><svg class="icon"><use href="/assets/icons.svg#i-mic"/></svg></button><button id="send" class="round-button send-button" type="submit" aria-label="发送给 Bob"><svg class="icon"><use href="/assets/icons.svg#i-arrow"/></svg></button></form>
+    </section>
+    <footer class="station-footer"><span>RADIO BOB FM.</span><span id="connection-label">CONNECTING.</span></footer>
+  </main>
+
+  <dialog id="profile-dialog" class="modal profile-modal" aria-labelledby="profile-heading">
+    <form method="dialog"><button class="round-button modal-close" aria-label="关闭 Bob 的资料"><svg class="icon"><use href="/assets/icons.svg#i-close"/></svg></button></form>
+    <div class="profile-hero"><div class="profile-avatar-wrap"><img src="/assets/bob-avatar.svg" alt="Bob 的像素头像" class="profile-avatar"><span class="profile-avatar-status" aria-hidden="true"></span></div><div><h2 id="profile-heading" class="dot-name">Radio Bob</h2><p class="profile-tagline">一开机我就打碟</p></div></div>
+    <div class="profile-description"><p>你的私人 DJ，会选歌的 taste.md <svg class="icon"><use href="/assets/icons.svg#i-headphones"/></svg></p><p>Your mood is my prompt.</p><p>Good music. Your own frequency.</p></div>
+    <div class="profile-stats"><div><span>ON AIR</span><strong id="profile-air">STANDBY</strong></div><div><span>GENRES</span><strong id="profile-genres">—</strong></div><div><span>LISTENER</span><strong>1</strong></div></div>
+    <div class="profile-taste"><div id="profile-genres-tags" class="genre-tags"><span class="profile-empty-taste">还没有品味资料，告诉 Bob 你喜欢什么。</span></div><button id="profile-taste-edit" class="pill-button taste-open" type="button">EDIT TASTE <svg class="icon"><use href="/assets/icons.svg#i-sliders"/></svg></button></div>
+
+    <div class="profile-footer">AI × YOUR TASTE</div>
+  </dialog>
+
+  <dialog id="taste-dialog" class="modal taste-modal" aria-labelledby="taste-heading"><form method="dialog"><button class="round-button modal-close" aria-label="关闭品味设置"><svg class="icon"><use href="/assets/icons.svg#i-close"/></svg></button></form><p class="eyebrow">YOUR MUSICAL DNA</p><h2 id="taste-heading">你的音乐品味</h2><p class="modal-description">喜欢的歌手、常听的风格、想避开的音乐。<br>写得随意一点，就像告诉一个朋友。</p><form id="taste-form"><label for="taste-input">TASTE.MD</label><textarea id="taste-input" rows="10" maxlength="20000" placeholder="我喜欢的歌手和乐队：&#10;&#10;常听的音乐风格：&#10;&#10;工作时 / 夜晚想听：&#10;&#10;不太喜欢："></textarea><p class="field-hint">保存在这台电脑，用于之后的选歌与聊天。</p><button class="primary-button" id="save-taste" type="submit">SAVE TASTE</button></form>    <div class="profile-settings"><label class="voice-setting"><span id="voice-state"><svg class="icon"><use href="/assets/icons.svg#i-sound"/></svg><span id="voice-label">DJ 口播</span></span><span class="toggle-label">自动口播<input id="auto-voice" type="checkbox" checked><span class="toggle" aria-hidden="true"></span></span></label><div class="service-status" id="service-status" aria-label="服务连接状态"><span class="service" id="claude-status"><i></i>AI</span><span class="service" id="fish-status"><i></i>Voice</span><span class="service" id="music-status"><i></i>Music</span><button class="text-button" id="refresh-status" type="button">CHECK ↗</button></div></div></dialog>
+
+  <dialog id="login-dialog" class="modal login-modal" aria-labelledby="login-heading"><form method="dialog"><button class="round-button modal-close" aria-label="关闭网易云登录"><svg class="icon"><use href="/assets/icons.svg#i-close"/></svg></button></form><p class="eyebrow">CONNECT YOUR MUSIC</p><h2 id="login-heading">连接网易云音乐</h2><p class="modal-description" id="login-description">用网易云音乐 App 扫码，连接你的收听权限。</p><div class="qr-wrap" id="qr-wrap"><img id="qr-image" alt="网易云音乐登录二维码" hidden><span class="qr-placeholder" id="qr-placeholder">正在准备二维码…</span></div><p class="login-status" id="login-status" role="status">连接后，歌曲会按照你的账号权限播放。</p><button id="refresh-qr" class="primary-button" type="button" hidden>重新生成二维码</button><button id="logout" class="secondary-button" type="button" hidden>退出网易云账号</button><p class="login-note">无需提供密码。会员歌曲仍受账号权限限制。</p></dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <audio id="music-audio" preload="metadata"></audio>
+  <audio id="speech-audio" preload="none"></audio>
+</body>
+</html>

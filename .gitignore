@@ -1,0 +1,10 @@
+# Local credentials and environment overrides
+.env
+.env.*
+!.env.example
+node_modules/
+.data/
+user/
+work/
+.DS_Store
+*.log

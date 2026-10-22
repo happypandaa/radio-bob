@@ -1,0 +1,146 @@
+{
+  "packageFormat": "local-web-app",
+  "formatVersion": 2,
+  "runtime": "node-service",
+  "app": {
+    "id": "dev.radio-bob.managed-trial",
+    "name": "Radio Bob",
+    "version": "0.1.0",
+    "description": "由平台管理 Node 后端的 AI 电台源码适配范例；配置规范可校验，尚未完成正式安装与完整分发包。"
+  },
+  "web": {
+    "root": "public",
+    "entry": "index.html",
+    "routing": "files"
+  },
+  "backend": {
+    "protocolVersion": 1,
+    "root": "server",
+    "entry": "managed.mjs",
+    "nodeMajor": 24
+  },
+  "configuration": {
+    "version": 1,
+    "fields": [
+      {
+        "name": "ANTHROPIC_BASE_URL",
+        "label": "AI 服务地址",
+        "type": "url",
+        "required": true,
+        "secret": false,
+        "description": "节目生成请求发往此地址。当前预填已验证的 DeepSeek Anthropic 兼容接口，应用会追加 /v1/messages；这不是聊天网页地址。保留默认即可；没有有效地址时标准配置校验不允许启动 AI 版 Radio。",
+        "howToGet": [
+          "使用 DeepSeek 时保留默认 https://api.deepseek.com/anthropic。",
+          "如需更换服务商，先查其官方文档是否支持 Anthropic Messages 兼容请求，再复制兼容接口基础地址。",
+          "服务地址、密钥和模型必须来自同一服务商；不要填写聊天网站、账号密码或包含密钥的网址。"
+        ],
+        "placeholder": "https://api.deepseek.com/anthropic",
+        "default": "https://api.deepseek.com/anthropic",
+        "helpUrl": "https://api-docs.deepseek.com/guides/anthropic_api/"
+      },
+      {
+        "name": "ANTHROPIC_API_KEY",
+        "label": "AI API 密钥",
+        "type": "string",
+        "required": true,
+        "secret": true,
+        "description": "允许 Radio 请求 AI 服务来选歌和生成中文串词，相当于该服务的应用访问凭证，并可能消耗账号额度。只交给本应用 Node 后端，不放进网页；未填写时标准配置校验不允许启动 AI 版 Radio。",
+        "howToGet": [
+          "打开下方 DeepSeek API keys 页面，登录你自己的开放平台账号。",
+          "创建供 Radio 使用的 API 密钥，确认已开通 API 服务并有可用额度。",
+          "复制创建时显示的密钥到此项；不要填写聊天密码、Claude Code 登录令牌或把密钥写入应用说明文件。"
+        ],
+        "placeholder": "粘贴你自己的 DeepSeek API 密钥",
+        "endpointField": "ANTHROPIC_BASE_URL",
+        "helpUrl": "https://platform.deepseek.com/api_keys"
+      },
+      {
+        "name": "CLAUDE_MODEL",
+        "label": "AI 模型",
+        "type": "string",
+        "required": true,
+        "secret": false,
+        "description": "指定 AI 服务要使用的模型 ID，预填本项目已真实验证的 deepseek-flash。它不是另一把密钥；保留默认即可，没有有效模型时标准配置校验不允许启动 AI 版 Radio。可用性和费用以服务商为准。",
+        "howToGet": [
+          "使用 DeepSeek 时先保留默认 deepseek-flash。",
+          "需要更换时打开下方官方模型与价格说明，核对账号可用的模型 ID 及费用。",
+          "复制模型 ID，不使用宣传名称或自行添加后缀；更换供应商时同时核对上方服务地址和密钥。"
+        ],
+        "placeholder": "deepseek-flash",
+        "default": "deepseek-flash",
+        "helpUrl": "https://api-docs.deepseek.com/quick_start/pricing"
+      },
+      {
+        "name": "FISH_API_KEY",
+        "label": "语音生成密钥（可选）",
+        "type": "string",
+        "required": false,
+        "secret": true,
+        "description": "允许 Radio 通过固定的 Fish Audio 官方接口 https://api.fish.audio/v1/tts 把中文串词合成为主持声音，可能消耗 Fish 账号额度。留空时不发送语音生成请求，仍可看文字串词和听音乐。",
+        "howToGet": [
+          "想听主持声音时，打开下方 Fish Audio API Keys 页面并登录自己的账号。",
+          "创建用于语音合成的 API 密钥，确认账号额度及所选语音模型、音色的使用权限。",
+          "复制密钥到此项；它与 AI 密钥不同。只想先体验文字和音乐时可以留空。"
+        ],
+        "placeholder": "需要主持声音时粘贴 Fish Audio API 密钥",
+        "helpUrl": "https://fish.audio/app/api-keys/"
+      },
+      {
+        "name": "FISH_REFERENCE_ID",
+        "label": "主持人音色 ID（可选）",
+        "type": "string",
+        "required": false,
+        "secret": false,
+        "description": "选择 Fish Audio 中你有权使用的主持人声音。它是音色标识，不是密钥；留空表示请求时不指定音色，由语音服务处理。未填写语音密钥时，此项不会发起请求。",
+        "howToGet": [
+          "先确认你已取得上方 Fish Audio 语音密钥。",
+          "按下方官方快速入门找到你有使用权限的音色资料，复制 reference ID。",
+          "只填写音色 ID，不填写整个网页地址；暂时不指定音色时可以留空。"
+        ],
+        "placeholder": "填写有权使用的 Fish 音色 ID",
+        "helpUrl": "https://docs.fish.audio/developer-guide/getting-started/quickstart"
+      },
+      {
+        "name": "FISH_MODEL",
+        "label": "语音生成模型（可选）",
+        "type": "select",
+        "required": false,
+        "secret": false,
+        "description": "选择 Fish Audio 合成主持声音的模型。通常保留默认 s2.1-pro-free；程序不会自动切换到其他计费模型。留空使用程序默认型号；未填写语音密钥时不发起语音请求。型号名称不保证你的账号当前有权限、额度或可用服务。",
+        "howToGet": [
+          "通常保留默认 s2.1-pro-free。",
+          "需要更换时，打开下方 Fish Audio 官方语音接口说明，核对账号支持的模型、额度和价格后再选择。",
+          "如果服务提示权限、额度或型号不可用，请在 Fish 控制台确认；不需要主持声音时可不填语音密钥。"
+        ],
+        "default": "s2.1-pro-free",
+        "options": [
+          {
+            "value": "s1",
+            "label": "s1"
+          },
+          {
+            "value": "s2-pro",
+            "label": "s2-pro"
+          },
+          {
+            "value": "s2.1-pro",
+            "label": "s2.1-pro"
+          },
+          {
+            "value": "s2.1-pro-free",
+            "label": "s2.1-pro-free"
+          },
+          {
+            "value": "drama-3",
+            "label": "drama-3"
+          }
+        ],
+        "helpUrl": "https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech"
+      }
+    ]
+  },
+  "documentation": {
+    "readme": "docs/MANAGED_USER_GUIDE.md",
+    "development": "docs/MANAGED_DEVELOPMENT.md"
+  }
+}

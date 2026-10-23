@@ -5,7 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { createStore } from './store.mjs';
 import { createMusicClient } from './music.mjs';
 import { createClaudeClient } from './claude.mjs';
-import { createTtsClient } from './tts.mjs';
+import { createTtsClientFromEnv } from './tts.mjs';
 import { controlIntent } from './router.mjs';
 
 export function createRadioApplication({ root, env = process.env, dataDir, profileDir, cacheDir = join(root, '.data', 'tts'), musicTransport, managed } = {}) {
@@ -21,7 +21,7 @@ const claude = createClaudeClient({
   maxTokens: env.CLAUDE_MAX_TOKENS ? Number(env.CLAUDE_MAX_TOKENS) : 8192,
   structuredOutput: structuredOutput === 'true' ? true : structuredOutput === 'false' ? false : structuredOutput,
 });
-const tts = createTtsClient({ apiKey: env.FISH_API_KEY, model: env.FISH_MODEL || 's2.1-pro-free', referenceId: env.FISH_REFERENCE_ID, cacheDir });
+const tts = createTtsClientFromEnv(env, cacheDir);
 const music = createMusicClient({ baseUrl: env.NETEASE_API_BASE_URL || 'http://127.0.0.1:3000', cookieProvider: managed ? () => '' : () => store.get('musicCookie', ''), transport: musicTransport,
   ...(managed ? { unavailableMessage: '暂时无法连接音乐服务，请稍后重试。' } : {}) });
 const clients = new Set();
@@ -72,26 +72,29 @@ async function serviceStatus(refresh = false) {
   const [brain, musicReady, account] = await Promise.allSettled([claude.health(), music.health(), managed ? Promise.resolve({ loggedIn: false }) : music.account()]);
   cachedStatus = { services: {
     claude: brain.status === 'fulfilled' ? brain.value : { ready: false, mode: 'api', message: '无法连接 AI 接口。' },
-    fish: { ready: tts.configured, model: env.FISH_MODEL || 's2.1-pro-free' },
+    tts: tts.status,
+    // Retain the old field for clients that still display Fish status.
+    fish: tts.status.provider === 'fish' ? tts.status : { ready: false, model: env.FISH_MODEL || 's2.1-pro-free' },
     music: { ready: musicReady.status === 'fulfilled' && musicReady.value, loggedIn: account.status === 'fulfilled' && account.value.loggedIn, ...(managed ? { loginEnabled: false, message: '受管试验暂不接入真实音乐账号。' } : {}), ...(account.status === 'fulfilled' && account.value.nickname ? { nickname: account.value.nickname } : {}) }
   } };
   statusAt = Date.now();
   return cachedStatus;
 }
-const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg' };
+const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.mp3': 'audio/mpeg', '.wav': 'audio/wav' };
 async function serveFile(req, res, path, type) {
   const info = await stat(path).catch(() => null);
   if (!info?.isFile()) throw fail('没有找到这个文件。', 404);
   const bytes = await readFile(path);
-  const headers = { 'Content-Type': mime[type || extname(path)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': type === '.mp3' ? 'private, max-age=86400' : 'no-cache' };
-  if (type === '.mp3') {
+  const isAudio = type === '.mp3' || type === '.wav';
+  const headers = { 'Content-Type': mime[type || extname(path)] || 'application/octet-stream', 'X-Content-Type-Options': 'nosniff', 'Cache-Control': isAudio ? 'private, max-age=86400' : 'no-cache' };
+  if (isAudio) {
     headers['Accept-Ranges'] = 'bytes';
     const range = req.headers.range?.match(/^bytes=(\d+)-(\d*)$/);
     if (range) {
       const start = Number(range[1]), end = Math.min(range[2] ? Number(range[2]) : bytes.length - 1, bytes.length - 1);
       if (start > end || start >= bytes.length) { res.writeHead(416, { 'Content-Range': `bytes */${bytes.length}` }); res.end(); return; }
       res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${bytes.length}`, 'Content-Length': end - start + 1 });
-      res.end(bytes.subarray(start, end + 1)); return;
+      res.end(req.method === 'HEAD' ? undefined : bytes.subarray(start, end + 1)); return;
     }
   }
   res.writeHead(200, { ...headers, 'Content-Length': bytes.length });
@@ -166,7 +169,6 @@ async function handle(req, res) {
       await body(req); store.set('musicCookie', ''); statusAt = 0; return json(res, 200, { ok: true });
     }
     if (path === '/api/tts' && method === 'POST') {
-      if (managed && !tts.configured) throw fail('尚未配置语音密钥，当前可以先使用文字串词。', 503);
       const data = await body(req);
       const message = data.messageId ? store.message(data.messageId) : null;
       if (data.messageId && message?.role !== 'assistant') throw fail('没有找到这条主持内容。', 404);
@@ -198,7 +200,8 @@ async function handle(req, res) {
             const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
             return matches.find(item => normalize(item.title) === normalize(song.title) && normalize(item.artist).includes(normalize(song.artist))) || null;
           })),
-          tts.configured ? tts.synthesize(plan.say).catch(error => ({ error: error.message })) : Promise.resolve({ error: '尚未配置 Fish Audio，先显示文字串词。' })
+          tts.configured ? tts.synthesize(plan.say).catch(error => ({ error: error.message }))
+            : Promise.resolve(tts.status.provider === 'none' ? { disabled: true } : { error: `${tts.status.message} 当前使用文字串词。` })
         ]);
         const tracks = [...new Map(found.filter(x => x.status === 'fulfilled' && x.value).map(x => [x.value.id, x.value])).values()];
         const missing = found.filter(x => x.status === 'rejected' || !x.value).length;
@@ -210,8 +213,8 @@ async function handle(req, res) {
       } finally { chatBusy = false; }
     }
     if (path.startsWith('/api/')) throw fail('接口不存在。', 404);
-    const audio = path.match(/^\/tts\/([a-f0-9]{64})\.mp3$/);
-    if (audio && ['GET', 'HEAD'].includes(method)) return await serveFile(req, res, join(cacheDir, `${audio[1]}.mp3`), '.mp3');
+    const audio = path.match(/^\/tts\/([a-f0-9]{64})\.(mp3|wav)$/);
+    if (audio && ['GET', 'HEAD'].includes(method)) return await serveFile(req, res, join(cacheDir, `${audio[1]}.${audio[2]}`), `.${audio[2]}`);
     if (managed) throw fail('受管后端不提供静态页面。', 404);
     if (!['GET', 'HEAD'].includes(method)) throw fail('不支持这个请求。', 405);
     if (/^\/assets\/(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_.-]+\.(?:woff2|png|jpg|webp|svg|css)$/.test(path)) {

@@ -294,5 +294,12 @@
   "documentation": {
     "readme": "docs/MANAGED_USER_GUIDE.md",
     "development": "docs/MANAGED_DEVELOPMENT.md"
+  },
+  "development": {
+    "sourceDir": ".",
+    "build": {
+      "kind": "none"
+    },
+    "outputDir": "."
   }
 }

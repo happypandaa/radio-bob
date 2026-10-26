@@ -130,7 +130,7 @@ npm test
 
 ### Bob DJ 角色（2026-10-22）
 
-顶部品牌、DJ 资料卡和聊天消息现使用用户确认的 Bob 正面像素头像，资源为 `public/assets/bob-avatar.svg`，保留透明背景并使用像素边缘渲染。旧猫头像作为未使用的历史资源保留。
+顶部品牌、DJ 资料卡和聊天消息使用原创几何电台头像 `public/assets/bob-avatar.svg`，保留透明背景与像素边缘渲染。公开版本已替换电影角色参考头像，移除旧猫头像与截图提取纹理。
 
 `server/claude.mjs` 的实际 AI 请求已接入 Bob 角色：温厚、松弛、简短的中文口播，以 Grateful Dead、The Incredible String Band、Muddy Waters 为音乐品味锚点，同时优先回应用户需求。保留每次 1–5 首、默认 3 首、30–100 字口播和四字段 JSON 契约；AI 先推荐，应用随后验证曲库与可播性。新设定用于之后生成的节目，已有聊天与队列保留，没有数据迁移或 schema 变更。
 
@@ -141,3 +141,7 @@ npm test
 增加 Fish Audio、豆包语音、Gemini 和关闭语音的显式选择，并保留 Fish 默认值。配置说明区分各服务的密钥、音色与模型，音频缓存支持 MP3 和 WAV。此次自动化测试 74/74 通过，使用模拟服务与临时目录，没有使用真实语音密钥或调用真实语音生成 API；服务商权限、地区、额度及实际音质仍需在对应账号下验证。
 
 同实例声明更新已通过新核心方法应用于实际 Radio，未通过原生窗口点击：更新前精确核对旧登记摘要与 Git 旧清单相等，来源、应用、网页和后端声明不变，原 6 项配置语义不变，新增 8 项全部可选。更新后配置 JSON 字节不变，`data/`、`cache/`、`runs/` 和凭证文件已检查的设备号、inode、大小、修改时间和权限元数据不变；没有读取真实 Key 明文，也没有启动 Radio。平台实际解析器已接受新清单，相关帮助链接限制有回归覆盖。新增核心检查 9 项、旧登记检查 10 项、界面检查 32 项通过，前端构建和 Tauri 检查通过；新增按钮仍需新版平台构建与原生窗口人工验收。
+
+## License
+
+Original project code and original vector assets are licensed under the [MIT License](LICENSE). Third-party fonts and icons retain their own licenses; see [asset credits](public/assets/ASSETS.md).

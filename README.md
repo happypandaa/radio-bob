@@ -116,8 +116,12 @@ npm test
 
 ### Bob DJ 角色（2026-10-22）
 
-顶部品牌、DJ 资料卡和聊天消息现使用用户确认的 Bob 正面像素头像，资源为 `public/assets/bob-avatar.svg`，保留透明背景并使用像素边缘渲染。旧猫头像作为未使用的历史资源保留。
+顶部品牌、DJ 资料卡和聊天消息使用原创几何电台头像 `public/assets/bob-avatar.svg`，保留透明背景与像素边缘渲染。公开版本已替换电影角色参考头像，移除旧猫头像与截图提取纹理。
 
 `server/claude.mjs` 的实际 AI 请求已接入 Bob 角色：温厚、松弛、简短的中文口播，以 Grateful Dead、The Incredible String Band、Muddy Waters 为音乐品味锚点，同时优先回应用户需求。保留每次 1–5 首、默认 3 首、30–100 字口播和四字段 JSON 契约；AI 先推荐，应用随后验证曲库与可播性。新设定用于之后生成的节目，已有聊天与队列保留，没有数据迁移或 schema 变更。
 
 本次验证：50/50 自动化测试通过，前后端 JavaScript 语法检查通过；本机界面及头像资源均返回 HTTP 200，浏览器确认顶部、聊天和资料卡显示新头像。未发起真实模型选曲或 Fish 语音合成请求。
+
+## License
+
+Original project code and original vector assets are licensed under the [MIT License](LICENSE). Third-party fonts and icons retain their own licenses; see [asset credits](public/assets/ASSETS.md).

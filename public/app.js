@@ -154,11 +154,11 @@ function toggleFavorite() {
 }
 
 function renderStatus() {
-  for (const [key, label] of [['claude', 'AI'], ['fish', 'Voice'], ['music', 'Music']]) {
+  for (const [key, label] of [['claude', 'AI'], ['tts', 'Voice'], ['music', 'Music']]) {
     const item = $(`${key}-status`);
-    const service = services?.[key];
+    const service = services?.[key] || (key === 'tts' ? services?.fish : null);
     item.classList.toggle('ready', Boolean(service?.ready));
-    item.classList.toggle('failed', Boolean(services && !service?.ready));
+    item.classList.toggle('failed', Boolean(services && !service?.ready && service?.provider !== 'none'));
     const description = !services ? '正在检查' : service?.message || (service?.ready ? '已就绪' : '未就绪');
     item.title = `${label}：${description}`;
     item.setAttribute('aria-label', `${label}：${description}`);
@@ -170,7 +170,12 @@ function renderStatus() {
   $('account-label').textContent = loggedIn ? 'LINKED' : loginEnabled ? 'LOGIN' : 'GUEST';
   $('account-button').setAttribute('aria-label', !loginEnabled ? '游客模式，暂不支持连接网易云账号' : loggedIn ? '查看网易云账号' : '连接网易云');
   $('account-button').title = !loginEnabled ? services.music.message || '暂不支持连接网易云账号。' : '';
-  if (speech.paused) $('voice-label').textContent = services && !services.fish?.ready ? '口播尚未就绪' : 'DJ 口播';
+  if (speech.paused) $('voice-label').textContent = voiceLabel();
+}
+function voiceLabel() {
+  const voice = services?.tts || services?.fish;
+  return voice?.provider === 'none' ? '口播已关闭' : services && !voice?.ready ? '口播尚未就绪'
+    : voice?.label ? `DJ 口播 · ${voice.label}` : 'DJ 口播';
 }
 async function refreshStatus(showFeedback = false) {
   $('refresh-status').disabled = true;
@@ -179,8 +184,11 @@ async function refreshStatus(showFeedback = false) {
     services = data.services || {};
     renderStatus();
     if (showFeedback) {
-      const missing = [['claude', 'AI'], ['fish', '语音'], ['music', '音乐']].filter(([key]) => !services[key]?.ready).map(([, label]) => label);
-      toast(missing.length ? `${missing.join('、')}尚未就绪，请检查本地配置。` : 'AI 配置、语音和音乐服务均已就绪。');
+      const missing = [['claude', 'AI'], ['tts', '语音'], ['music', '音乐']]
+        .filter(([key]) => key === 'tts' ? !(services.tts || services.fish)?.ready && services.tts?.provider !== 'none' : !services[key]?.ready)
+        .map(([, label]) => label);
+      toast(missing.length ? `${missing.join('、')}尚未就绪，请检查本地配置。`
+        : services.tts?.provider === 'none' ? 'AI 配置和音乐服务已就绪，语音已关闭。' : 'AI 配置、语音和音乐服务均已就绪。');
     }
   } catch (error) {
     if (showFeedback) toast(error.message);
@@ -471,7 +479,7 @@ async function playSpeech(url) {
 function updateSpeechState() {
   const playing = !speech.paused && !speech.ended;
   $('dj-wave').classList.toggle('speaking', playing);
-  $('voice-label').textContent = playing ? 'Bob 正在说话…' : services && !services.fish?.ready ? '口播尚未就绪' : 'DJ 口播';
+  $('voice-label').textContent = playing ? 'Bob 正在说话…' : voiceLabel();
   updateMusicVolume();
   updateTransport();
 }

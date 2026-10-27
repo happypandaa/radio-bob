@@ -4,9 +4,17 @@
 
 首次试验验证了实例初始化、本地后端、状态、人工队列/品味、正常停止和异常退出；此前还通过一次真实 DeepSeek 选曲、曲库匹配和浏览器音乐播放。那些是较早的诊断证据，不能替代当前原生应用窗口验收。后端不直接提供网页，平台负责受控原生窗口与本机连接，用户不需要取得端口或认证令牌。
 
+## 在原实例更新应用说明
+
+本次源码已增加多家语音服务的配置声明。新平台版本为旧外部源码目录登记提供“查看新版应用说明”入口：先正常关闭 Radio，在原生管理窗口打开原实例详情，预览当前来源、后端和完整配置字段，再明确确认更新。平台保留同一实例的普通配置、密钥绑定和业务数据，更新不会自动启动 Radio；之后再选择语音服务、填写对应凭证并保存。
+
+旧平台不提供此更新按钮，来源摘要不一致时仍按原门禁阻止打开；使用新按钮需要构建并运行包含它的平台版本。旧登记只有摘要、没有历史完整声明，不能自动比较并证明本次仅增加可选字段；确认表示重新信任当前来源。无需删除实例或在相同路径重新登记；v2 受管安装实例使用正常应用更新流程。
+
+本轮已通过临时本地验证程序调用新核心的预览与确认方法，更新实际 Radio 原实例的登记，未通过原生窗口点击。更新前核对旧摘要精确等于 Git 旧清单，来源、应用、网页与后端未变，原 6 项配置语义未变，新增 8 项全部可选。更新后仍为同一实例、14 个字段、配置修订 `4`、AI Key 已设置，启动配置校验通过。原配置 JSON 字节不变，业务数据、缓存、运行历史与凭证文件已检查的设备号、inode、大小、修改时间及权限元数据不变；没有读取真实 Key 明文，也没有启动 Radio。新版平台的新增按钮尚未原生验收，不能把这次核心调用记作窗口点击成功。
+
 ## 从平台使用
 
-1. 从平台“我的项目”接入这个源码目录，Radio 以 Node 类型图标显示，和网页类型卡片位于同一列表；从卡片打开页内带 tabs 的详情／配置弹窗，按下面六项说明填写。已有普通默认值通常不用改。
+1. 从平台“我的项目”接入这个源码目录，Radio 以 Node 类型图标显示，和网页类型卡片位于同一列表；从卡片打开页内带 tabs 的详情／配置弹窗，完成上述应用说明更新后，按下面各项说明填写。已有普通默认值通常不用改。
 2. 保存配置。按用户最新选择，API 密钥存放在 Radio 自己的本机受管槽 `configuration/credentials/` 私有文件中，目录权限 `0700`、文件权限 `0600`。这是当前用户文件权限保护的明文，不是 macOS 钥匙串或系统加密库；界面仅显示“已设置”，不会读回显示。该槽不是源码目录或分享包，不要把密钥写进说明文件、Git 或截图。
 3. 点击“打开应用”。必填不足时该入口仍可点击，先打开同一详情弹窗的配置 tab，提示缺项与获取方法，不把用户留在禁用按钮外。保存不会自动启动；配置完整后再明确打开，平台后台启动服务并显示原生窗口。
 4. 再次打开只聚焦同一个窗口，节目与未保存内容不会因为重复点击而重置；不另开浏览器、终端或弹出第二个应用窗口。
@@ -18,18 +26,30 @@
 
 `local-app.json` 是应用交给平台的说明文件：声明运行方式，以及需要用户提供哪些配置。它只包含用途、默认地址、默认模型和帮助链接，**不包含任何人的真实密钥**。密钥属于使用者自己的账号，不能写进说明文件后随应用分享。
 
-当前面向用户保留六项设置：
+AI 节目生成的三项设置仍为必填；主持语音相关设置全部可选。先选择语音服务，仅填写对应供应商的配置，其他服务的密钥可以留空。
 
 | 设置 | 怎么填 | 不填的影响 |
 | --- | --- | --- |
 | AI 服务地址 | 通常保留 `https://api.deepseek.com/anthropic`。这是程序接口，不是聊天网页。 | 标准配置要求此项；省略时采用清单默认值。 |
 | AI API 密钥 | 到 [DeepSeek API keys](https://platform.deepseek.com/api_keys) 创建自己的密钥；确认账号服务及额度。 | 必填。AI 版 Radio 的标准配置校验不会放行启动。 |
 | AI 模型 | 通常保留已验证的 `deepseek-flash`；可在[官方模型说明](https://api-docs.deepseek.com/quick_start/pricing)核对。 | 标准配置要求此项；省略时采用清单默认值。 |
-| 语音生成密钥 | 想听主持声音时，到 [Fish Audio API Keys](https://fish.audio/app/api-keys/) 创建自己的密钥。 | 可选。不生成语音，仍显示文字串词并播放音乐。 |
-| 主持人音色 ID | 按 [Fish 官方快速入门](https://docs.fish.audio/developer-guide/getting-started/quickstart)查找你有权使用的音色 reference ID。它不是密钥。 | 可选。请求时不指定音色，由语音服务处理。 |
-| 语音生成模型 | 通常保留 `s2.1-pro-free`；更换前核对 [Fish 官方接口说明](https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech)与账号权限。 | 可选。使用默认型号；没有语音密钥时不会请求。 |
+| 主持人语音服务 | 选择 Fish Audio、豆包语音、Gemini 或“关闭语音”；默认 Fish，兼容原配置。 | 可选。默认 Fish；关闭语音或所选服务未填密钥时，仍可看文字串词和听音乐。 |
+| Fish Audio API 密钥 | 仅选 Fish 时，到 [Fish Audio API Keys](https://fish.audio/app/api-keys/) 创建自己的密钥。 | 可选。选 Fish 但未填 Key 时不生成口播。 |
+| Fish 主持人音色 ID | 仅选 Fish 时，按[官方快速入门](https://docs.fish.audio/developer-guide/getting-started/quickstart)复制有权使用的音色 reference ID。 | 可选。不指定音色，由 Fish 服务处理。 |
+| Fish 语音模型 | 仅选 Fish 时，通常保留 `s2.1-pro-free`，更换前核对[官方接口说明](https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech)与账号权限。 | 可选。使用默认型号；没有 Fish Key 时不请求。 |
+| 豆包语音 API Key | 仅选豆包时，在[豆包语音新版控制台](https://console.volcengine.com/speech/new/setting/apikeys?projectName=default)创建 Key。不是方舟或 IAM Key。 | 可选。选豆包但未填 Key 时不生成口播。 |
+| 豆包语音资源 ID | 仅选豆包时，通常保留 `seed-tts-2.0`，并与已开通服务和音色匹配。 | 可选。使用默认资源；没有豆包 Key 时不请求。 |
+| 豆包音色 ID / Speaker ID | 仅选豆包时，保留 Vivi 2.0 的 `zh_female_vv_uranus_bigtts`，或从同一项目[音色库](https://console.volcengine.com/speech/new/voices?projectName=default)复制 Speaker ID。 | 可选。使用默认音色；没有豆包 Key 时不请求。 |
+| Gemini API Key | 仅选 Gemini 时，到 [Google AI Studio](https://aistudio.google.com/apikey)创建 Gemini API Key。 | 可选。选 Gemini 但未填 Key 时不生成口播。 |
+| Gemini 语音模型 | 仅选 Gemini 时，保留 `gemini-3.8-flash-tts` 或选择 `gemini-3.8-flash-lite-tts`，先核对[官方模型说明](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts)。 | 可选。使用默认模型；没有 Gemini Key 时不请求。 |
+| Gemini 预置音色 | 仅选 Gemini 时，保留 `Kore`，或按[官方语音说明](https://ai.google.dev/gemini-api/docs/speech-generation)选择预置音色名称。不是声音克隆 ID。 | 可选。使用 Kore；没有 Gemini Key 时不请求。 |
+| Gemini 口播风格 | 仅选 Gemini 时，用自然语言描述语气，默认“温暖、自然、松弛的中文电台主持口吻”。 | 可选。使用默认风格；没有 Gemini Key 时不请求。 |
 
-AI 地址、模型和密钥需要对应同一服务商。当前通过 [DeepSeek 的 Anthropic 兼容 API](https://api-docs.deepseek.com/guides/anthropic_api/)生成节目，不运行 Claude Code。语音只请求固定的 Fish Audio 官方地址 `https://api.fish.audio/v1/tts`，它使用另一把 Fish 密钥。名称带 `free` 的型号也不能保证每个账号当前都有额度、权限或可用服务；程序不会自动改用其他计费型号。
+AI 地址、模型和密钥需要对应同一服务商。当前通过 [DeepSeek 的 Anthropic 兼容 API](https://api-docs.deepseek.com/guides/anthropic_api/)生成节目，不运行 Claude Code。语音服务由“主持人语音服务”显式选择，只使用所选服务的密钥和参数，不会按已填写的 Key 自动切换。名称带 `free` 的 Fish 型号也不能保证每个账号当前都有额度、权限或可用服务；程序不会自动改用其他供应商或计费型号。
+
+豆包只接入新版 API Key 鉴权，不需要 App ID、Access Token 或 Secret Key，也不要填写火山方舟聊天模型 Key 或 IAM AccessKey。先在目标项目“开通管理”开通语音合成 2.0，再在同一项目“API管理”创建 Key、从“音色库”复制 Speaker ID。Key、服务和音色需属于同一项目；官方 2.0 音色配 `seed-tts-2.0`，声音复刻 2.0 音色配 `seed-icl-2.0` 并需开通对应服务。[官方控制台指引](https://docs.volcengine.com/docs/DoubaoVoice/console-guidance?lang=zh)
+
+Gemini 只需 Google AI Studio 的 Gemini API Key，无需 OAuth 登录令牌、App ID 或 Secret；`Kore` 等值是预置音色名称，与 Fish reference ID、豆包 Speaker ID 或声音克隆 ID 不通用。实际发起请求的电脑或服务器需位于 Google 的[支持地区](https://ai.google.dev/gemini-api/docs/available-regions)；本机运行时指运行 Radio 的电脑所在地区，当前官方列表不含中国大陆。免费额度、限额与[计费](https://ai.google.dev/gemini-api/docs/pricing)以 Google 当前政策和项目额度为准。
 
 较早离线验证只用人工值；早期真实 DeepSeek 试跑的凭据仅临时注入而不保存。当前平台改用 Radio 槽内的私有秘密文件，不读取、迁移或删除此前的 Keychain 条目，不能把早期记录当作当前存储方式。原有受管子进程还可直接启动来做无密钥的隔离生命周期测试，这不代表通过了 AI 版 Radio 的标准配置校验。
 
@@ -45,6 +65,11 @@ AI 地址、模型和密钥需要对应同一服务商。当前通过 [DeepSeek 
 
 ## 数据边界
 
-平台注入的 `APP_DATA_DIR` 保存本试验数据库与品味，`APP_CACHE_DIR` 保存口播缓存，`APP_TEMP_DIR` 保存 SDK 临时状态。受管入口拒绝把这些目录指向原项目或互相重叠；原 `.env`、聊天、队列、品味和 Cookie 不迁移、不读取。
+平台注入的 `APP_DATA_DIR` 保存本试验数据库与品味，`APP_CACHE_DIR` 保存口播缓存（Fish / 豆包为 MP3，Gemini 为 WAV），`APP_TEMP_DIR` 保存 SDK 临时状态。受管入口拒绝把这些目录指向原项目或互相重叠；原 `.env`、聊天、队列、品味和 Cookie 不迁移、不读取。
 
-当前未交付完整安装、数据迁移、备份恢复、凭据复制、清理和更新流程；不要把试验目录替代真实项目。早期 Mac 浏览器诊断已验证匿名搜索、30 秒试听，以及一首约 75 秒完整音源的播放进度与暂停；歌曲权限因曲目而异。真实登录、Fish 口播、长期运行及当前原生窗口内的真实播放，需要按平台交付记录分别核对，不能由上述浏览器诊断推导通过。
+当前未交付完整安装、数据迁移、备份恢复、凭据复制、清理和更新流程；不要把试验目录替代真实项目。早期 Mac 浏览器诊断已验证匿名搜索、30 秒试听，以及一首约 75 秒完整音源的播放进度与暂停；歌曲权限因曲目而异。真实登录、Fish 口播、长期运行及当前原生窗口内的真实播放，需要按平台交付记录分别核对，不能由上述浏览器诊断推导通过。此次新增豆包和 Gemini 的接入通过模拟服务验证，未使用真实语音 Key 或调用真实语音合成 API，不能据此宣称账号权限、地区可用性或实际音质已经验证。
+
+
+## 本次更新验证（2026-10-23）
+
+平台新增核心更新检查 9 项、既有登记检查 10 项、界面检查 32 项通过，前端构建与 Tauri 检查通过；Radio 74 项自动化测试通过，平台实际解析器已接受新版清单。真实 Radio 的同实例声明更新结果见上文。新增按钮需构建并运行新版平台后另做原生窗口人工验收；本轮没有启动 Radio、保存新语音 Key 或调用真实语音合成，服务商权限、地区、额度和实际音质仍需单独验证。

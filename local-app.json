@@ -71,27 +71,60 @@
         "helpUrl": "https://api-docs.deepseek.com/quick_start/pricing"
       },
       {
+        "name": "TTS_PROVIDER",
+        "label": "主持人语音服务（可选）",
+        "type": "select",
+        "required": false,
+        "secret": false,
+        "description": "选择合成主持口播的服务：Fish Audio、豆包或 Gemini；关闭语音则只保留文字串词和音乐。默认 Fish Audio 以兼容原配置，仅使用所选服务的凭证和参数，不会按已填写的密钥自动切换。所选服务没有密钥时不生成语音。",
+        "howToGet": [
+          "选择自己已开通且有可用额度的语音服务，再填写对应的密钥与音色配置；其他服务的配置可以留空。",
+          "Fish 使用 Fish Audio API Key；豆包使用豆包语音控制台 API Key；Gemini 使用 Google AI Studio 的 Gemini API Key。",
+          "只想使用文字串词和音乐时选择“关闭语音”；默认 Fish 的原有配置可继续使用。"
+        ],
+        "default": "fish",
+        "options": [
+          {
+            "value": "fish",
+            "label": "Fish Audio"
+          },
+          {
+            "value": "doubao",
+            "label": "豆包语音（火山引擎）"
+          },
+          {
+            "value": "gemini",
+            "label": "Gemini（Google AI Studio）"
+          },
+          {
+            "value": "none",
+            "label": "关闭语音，仅文字和音乐"
+          }
+        ],
+        "helpUrl": "https://ai.google.dev/gemini-api/docs/speech-generation"
+      },
+      {
         "name": "FISH_API_KEY",
-        "label": "语音生成密钥（可选）",
+        "label": "Fish Audio API 密钥（仅 Fish，可选）",
         "type": "string",
         "required": false,
         "secret": true,
-        "description": "允许 Radio 通过固定的 Fish Audio 官方接口 https://api.fish.audio/v1/tts 把中文串词合成为主持声音，可能消耗 Fish 账号额度。留空时不发送语音生成请求，仍可看文字串词和听音乐。",
+        "description": "仅在语音服务选择 Fish Audio 时使用，通过 Fish 官方接口合成主持口播，可能消耗 Fish 账号额度。留空时不发送语音请求，仍可看文字串词和听音乐；填写其他服务的密钥不会自动切换语音服务。",
         "howToGet": [
-          "想听主持声音时，打开下方 Fish Audio API Keys 页面并登录自己的账号。",
-          "创建用于语音合成的 API 密钥，确认账号额度及所选语音模型、音色的使用权限。",
-          "复制密钥到此项；它与 AI 密钥不同。只想先体验文字和音乐时可以留空。"
+          "先将语音服务选择为 Fish Audio；只使用文字串词和音乐时可留空。",
+          "打开下方 Fish Audio API Keys 页面，登录自己的账号并创建用于 Radio 的 API 密钥。",
+          "确认账号有可用额度，以及所选模型和音色的使用权限；此密钥与 AI 节目生成、豆包或 Gemini 的密钥不同。"
         ],
-        "placeholder": "需要主持声音时粘贴 Fish Audio API 密钥",
+        "placeholder": "选择 Fish 时填写自己的 Fish Audio API 密钥",
         "helpUrl": "https://fish.audio/app/api-keys/"
       },
       {
         "name": "FISH_REFERENCE_ID",
-        "label": "主持人音色 ID（可选）",
+        "label": "Fish 主持人音色 ID（仅 Fish，可选）",
         "type": "string",
         "required": false,
         "secret": false,
-        "description": "选择 Fish Audio 中你有权使用的主持人声音。它是音色标识，不是密钥；留空表示请求时不指定音色，由语音服务处理。未填写语音密钥时，此项不会发起请求。",
+        "description": "仅在语音服务选择 Fish Audio 时使用，填写自己有权使用的 reference ID。它是 Fish 音色标识，不是 API 密钥，也不是豆包 Speaker ID 或 Gemini 的 Kore 等预置音色名称。留空时请求不指定音色；没有 Fish 密钥时不请求。",
         "howToGet": [
           "先确认你已取得上方 Fish Audio 语音密钥。",
           "按下方官方快速入门找到你有使用权限的音色资料，复制 reference ID。",
@@ -102,11 +135,11 @@
       },
       {
         "name": "FISH_MODEL",
-        "label": "语音生成模型（可选）",
+        "label": "Fish 语音模型（仅 Fish，可选）",
         "type": "select",
         "required": false,
         "secret": false,
-        "description": "选择 Fish Audio 合成主持声音的模型。通常保留默认 s2.1-pro-free；程序不会自动切换到其他计费模型。留空使用程序默认型号；未填写语音密钥时不发起语音请求。型号名称不保证你的账号当前有权限、额度或可用服务。",
+        "description": "仅在语音服务选择 Fish Audio 时使用，通常保留 s2.1-pro-free。程序不会自动改用其他供应商或计费模型；型号带 free 不保证账号当前有权限、额度或可用服务。没有 Fish 密钥时仍可使用文字串词和音乐。",
         "howToGet": [
           "通常保留默认 s2.1-pro-free。",
           "需要更换时，打开下方 Fish Audio 官方语音接口说明，核对账号支持的模型、额度和价格后再选择。",
@@ -136,6 +169,125 @@
           }
         ],
         "helpUrl": "https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech"
+      },
+      {
+        "name": "DOUBAO_API_KEY",
+        "label": "豆包语音 API Key（仅豆包，可选）",
+        "type": "string",
+        "required": false,
+        "secret": true,
+        "description": "仅在语音服务选择豆包时使用。填写新版豆包语音控制台的 API Key，不是火山方舟聊天模型 API Key，也不是 IAM AccessKey。不需要 App ID、Access Token 或 Secret Key。服务开通、Key 和音色必须属于同一项目；留空时只使用文字串词和音乐。",
+        "howToGet": [
+          "打开下方豆包语音新版控制台，在左上角选择目标项目。",
+          "先在“开通管理”开通豆包语音合成模型 2.0，再在同一项目的“API管理”创建并复制 API Key。",
+          "到同一项目“音色库”复制 Speaker ID。此处仅支持新版 API Key；旧版 App ID、Access Token、Secret Key 不能填在这里。"
+        ],
+        "placeholder": "填写豆包语音新版控制台的 API Key",
+        "helpUrl": "https://console.volcengine.com/speech/new/setting/apikeys"
+      },
+      {
+        "name": "DOUBAO_RESOURCE_ID",
+        "label": "豆包语音资源 ID（仅豆包，可选）",
+        "type": "string",
+        "required": false,
+        "secret": false,
+        "description": "仅在语音服务选择豆包时使用。通常保留 seed-tts-2.0，表示语音合成 2.0 资源；它不是密钥或音色 ID。必须与已开通服务和 Speaker ID 匹配；声音复刻 2.0 音色使用 seed-icl-2.0，并需开通对应服务。没有豆包 Key 时不请求。",
+        "howToGet": [
+          "使用默认 Vivi 2.0 等官方 2.0 音色时保留 seed-tts-2.0。",
+          "如使用自己已训练的声音复刻 2.0 音色，先在同一项目开通对应服务，再按官方接口文档改用 seed-icl-2.0。",
+          "资源 ID、音色 ID 与 API Key 必须匹配同一项目和服务；不要填写方舟模型 ID、ep 接入点或 App ID。"
+        ],
+        "placeholder": "seed-tts-2.0",
+        "default": "seed-tts-2.0",
+        "helpUrl": "https://docs.volcengine.com/docs/DoubaoVoice/unidirectional-streaming-text-to-speech-http"
+      },
+      {
+        "name": "DOUBAO_SPEAKER",
+        "label": "豆包音色 ID / Speaker ID（仅豆包，可选）",
+        "type": "string",
+        "required": false,
+        "secret": false,
+        "description": "仅在语音服务选择豆包时使用。默认 zh_female_vv_uranus_bigtts 为 Vivi 2.0。它是音色 ID，不是密钥、App ID 或 Fish reference ID；更换时必须与所选资源 ID 和 Key 所在项目匹配。没有豆包 Key 时不请求。",
+        "howToGet": [
+          "先保留默认 Vivi 2.0 音色，或打开下方豆包语音“音色库”。",
+          "切换到 API Key 所在项目，在可用音色右侧复制 Speaker ID；只粘贴 ID，不填写整段网页地址。",
+          "官方 2.0 音色配 seed-tts-2.0；已训练的声音复刻 2.0 音色配 seed-icl-2.0，且需拥有对应使用权限。"
+        ],
+        "placeholder": "zh_female_vv_uranus_bigtts",
+        "default": "zh_female_vv_uranus_bigtts",
+        "helpUrl": "https://console.volcengine.com/speech/new/voices"
+      },
+      {
+        "name": "GEMINI_API_KEY",
+        "label": "Gemini API Key（仅 Gemini，可选）",
+        "type": "string",
+        "required": false,
+        "secret": true,
+        "description": "仅在语音服务选择 Gemini 时使用，填写 Google AI Studio 创建的 Gemini API Key，不需要 App ID、Secret 或 OAuth 登录令牌。实际发起请求的电脑或服务器需位于 Google 支持地区；本机运行时指运行 Radio 的电脑所在地区，当前列表不含中国大陆。免费额度、计费和模型权限以 Google 当前政策及项目额度为准；留空时仅使用文字串词和音乐。",
+        "howToGet": [
+          "打开下方 Google AI Studio API Keys 页面，登录自己的 Google 账号，选择或创建 Google Cloud 项目并创建 Gemini API Key。",
+          "确认项目已获 Gemini API 访问权限，有对应 TTS 模型的可用额度；需要付费使用时按 Google 要求开通计费。",
+          "确认实际发起请求的电脑或服务器位于 Gemini API 支持地区；本机运行时指运行 Radio 的电脑所在地区，当前官方列表不含中国大陆。只填写 API Key，不使用 OAuth 令牌或账号密码。"
+        ],
+        "placeholder": "填写 Google AI Studio 的 Gemini API Key",
+        "helpUrl": "https://aistudio.google.com/apikey"
+      },
+      {
+        "name": "GEMINI_TTS_MODEL",
+        "label": "Gemini 语音模型（仅 Gemini，可选）",
+        "type": "select",
+        "required": false,
+        "secret": false,
+        "description": "仅在语音服务选择 Gemini 时使用，默认 gemini-3.8-flash-tts，也可选择 flash-lite 语音模型。它是模型 ID，不是密钥；可用性、免费限额和费用取决于 Google 当前政策及项目权限。没有 Gemini Key 时不请求，也不会自动改用其他模型或服务。",
+        "howToGet": [
+          "通常保留默认 gemini-3.8-flash-tts。",
+          "需要更换时按下方 Google 官方模型说明核对账号可用型号，并在官方价格页确认免费额度与计费。",
+          "模型、Gemini API Key 和项目权限必须对应；地区或额度不满足时使用文字串词和音乐，或主动选择自己可用的语音服务。"
+        ],
+        "default": "gemini-3.8-flash-tts",
+        "options": [
+          {
+            "value": "gemini-3.8-flash-tts",
+            "label": "Gemini 3.8 Flash TTS"
+          },
+          {
+            "value": "gemini-3.8-flash-lite-tts",
+            "label": "Gemini 3.8 Flash Lite TTS"
+          }
+        ],
+        "helpUrl": "https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts"
+      },
+      {
+        "name": "GEMINI_TTS_VOICE",
+        "label": "Gemini 预置音色（仅 Gemini，可选）",
+        "type": "string",
+        "required": false,
+        "secret": false,
+        "description": "仅在语音服务选择 Gemini 时使用，默认 Kore。填写 Google 支持的预置音色名称；它不是密钥、Fish reference ID、豆包 Speaker ID 或自定义声音克隆 ID。没有 Gemini Key 时不请求。",
+        "howToGet": [
+          "通常保留默认 Kore。",
+          "打开下方 Google 官方语音生成说明，在 Voice options 中试听并选择预置音色名称。",
+          "按大小写填写名称，例如 Kore；不要粘贴音色网址或其他服务的音色 ID。"
+        ],
+        "placeholder": "Kore",
+        "default": "Kore",
+        "helpUrl": "https://ai.google.dev/gemini-api/docs/speech-generation"
+      },
+      {
+        "name": "GEMINI_TTS_STYLE",
+        "label": "Gemini 口播风格（仅 Gemini，可选）",
+        "type": "string",
+        "required": false,
+        "secret": false,
+        "description": "仅在语音服务选择 Gemini 时使用，用自然语言描述口播语气。默认“温暖、自然、松弛的中文电台主持口吻”。它不是主持串词正文或密钥，不会替代原串词；没有 Gemini Key 时不请求。",
+        "howToGet": [
+          "通常保留默认风格即可。",
+          "如需调整，可参考下方官方 Prompting guide，以自然语言描述语气、节奏或情绪，例如“轻松、温柔，语速稍慢”。",
+          "这里只填写风格要求；主持串词由节目生成流程提供。"
+        ],
+        "placeholder": "温暖、自然、松弛的中文电台主持口吻",
+        "default": "温暖、自然、松弛的中文电台主持口吻",
+        "helpUrl": "https://ai.google.dev/gemini-api/docs/speech-generation"
       }
     ]
   },

@@ -75,7 +75,7 @@ async function initialize(message) {
     initialized = true;
     clearTimeout(initTimer);
     emit('ready', { host: '127.0.0.1', port: application.server.address().port });
-    diagnostic('Ready. Real music account login is disabled in this experiment.');
+    diagnostic('Ready. Music login is available through the authenticated application API.');
   })();
   await initializePromise;
 }

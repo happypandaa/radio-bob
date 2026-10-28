@@ -7,12 +7,19 @@ import { createMusicClient } from './music.mjs';
 import { createClaudeClient } from './claude.mjs';
 import { createTtsClientFromEnv } from './tts.mjs';
 import { controlIntent } from './router.mjs';
+import { createMusicSessionStore } from './music-session.mjs';
 
 export function createRadioApplication({ root, env = process.env, dataDir, profileDir, cacheDir = join(root, '.data', 'tts'), musicTransport, managed } = {}) {
 // Managed instances use the two declared keys; obsolete saved options must not
 // change the default service, model or voice after an application update.
 if (managed) env = { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY, FISH_API_KEY: env.FISH_API_KEY };
 const store = createStore(root, { dataDir, profileDir });
+let musicSession;
+try {
+  musicSession = managed
+    ? createMusicSessionStore(join(dataDir || join(root, '.data'), 'credentials', 'netease-session'))
+    : { get: () => store.get('musicCookie', ''), set: value => store.set('musicCookie', value), clear: () => store.set('musicCookie', '') };
+} catch (error) { store.close(); throw error; }
 const structuredOutput = env.CLAUDE_STRUCTURED_OUTPUT || 'auto';
 const claude = createClaudeClient({
   mode: env.CLAUDE_MODE || 'api',
@@ -25,7 +32,7 @@ const claude = createClaudeClient({
   structuredOutput: structuredOutput === 'true' ? true : structuredOutput === 'false' ? false : structuredOutput,
 });
 const tts = createTtsClientFromEnv(env, cacheDir);
-const music = createMusicClient({ baseUrl: env.NETEASE_API_BASE_URL || 'http://127.0.0.1:3000', cookieProvider: managed ? () => '' : () => store.get('musicCookie', ''), transport: musicTransport,
+const music = createMusicClient({ baseUrl: env.NETEASE_API_BASE_URL || 'http://127.0.0.1:3000', cookieProvider: () => musicSession.get(), transport: musicTransport,
   ...(managed ? { unavailableMessage: '暂时无法连接音乐服务，请稍后重试。' } : {}) });
 const clients = new Set();
 const active = new Set();
@@ -34,6 +41,15 @@ let closePromise;
 let chatBusy = false;
 let cachedStatus;
 let statusAt = 0;
+let authRevision = 0;
+const pendingLogins = new Map();
+const QR_LIFETIME_MS = 5 * 60_000;
+
+function invalidateLogin() {
+  authRevision += 1;
+  pendingLogins.clear();
+  statusAt = 0;
+}
 
 function fail(message, status = 400) { return Object.assign(new Error(message), { status }); }
 function json(res, status, data) {
@@ -72,13 +88,23 @@ function broadcast() {
 }
 async function serviceStatus(refresh = false) {
   if (!refresh && cachedStatus && Date.now() - statusAt < 10000) return cachedStatus;
-  const [brain, musicReady, account] = await Promise.allSettled([claude.health(), music.health(), managed ? Promise.resolve({ loggedIn: false }) : music.account()]);
+  const revision = authRevision;
+  const hasSession = Boolean(musicSession.get());
+  const [brain, musicReady, account] = await Promise.allSettled([claude.health(), music.health(), hasSession ? music.account() : Promise.resolve({ loggedIn: false })]);
+  // A login/logout can finish while the account request is in flight.
+  if (revision !== authRevision) return serviceStatus(true);
+  if (hasSession && account.status === 'fulfilled' && !account.value.loggedIn) {
+    musicSession.clear();
+    invalidateLogin();
+  }
   cachedStatus = { services: {
     claude: brain.status === 'fulfilled' ? brain.value : { ready: false, mode: 'api', message: '无法连接 AI 接口。' },
     tts: tts.status,
     // Retain the old field for clients that still display Fish status.
     fish: tts.status,
-    music: { ready: musicReady.status === 'fulfilled' && musicReady.value, loggedIn: account.status === 'fulfilled' && account.value.loggedIn, ...(managed ? { loginEnabled: false, message: '受管试验暂不接入真实音乐账号。' } : {}), ...(account.status === 'fulfilled' && account.value.nickname ? { nickname: account.value.nickname } : {}) }
+    music: { ready: musicReady.status === 'fulfilled' && musicReady.value, loginEnabled: true,
+      loggedIn: account.status === 'fulfilled' && account.value.loggedIn,
+      ...(account.status === 'fulfilled' && account.value.nickname ? { nickname: account.value.nickname } : {}) }
   } };
   statusAt = Date.now();
   return cachedStatus;
@@ -120,7 +146,6 @@ async function handle(req, res) {
     const path = url.pathname;
     const method = req.method;
     if (managed && path === '/_platform/health' && method === 'GET') return json(res, 200, { protocolVersion: 1, instanceId: managed.instanceId, status: 'ok' });
-    if (managed && ['/api/login/qr', '/api/login/check', '/api/logout'].includes(path)) throw fail('本轮受管试验不接入真实音乐账号，请勿扫码登录。', 403);
     if (path === '/api/events' && method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
       res.write(`event: state\ndata: ${JSON.stringify(store.state())}\n\n`);
@@ -162,14 +187,33 @@ async function handle(req, res) {
       if (Number.isFinite(data.volume)) store.set('volume', Math.min(1, Math.max(0, data.volume)));
       broadcast(); return json(res, 200, { ok: true });
     }
-    if (path === '/api/login/qr' && method === 'GET') return json(res, 200, await music.createQr());
+    if (path === '/api/login/qr' && method === 'GET') {
+      const revision = authRevision;
+      const qr = await music.createQr();
+      if (closing || revision !== authRevision) throw fail('登录状态已变化，请重新生成二维码。', 409);
+      for (const [key, login] of pendingLogins) if (login.expiresAt <= Date.now()) pendingLogins.delete(key);
+      if (pendingLogins.size >= 20) pendingLogins.delete(pendingLogins.keys().next().value);
+      pendingLogins.set(qr.key, { revision, expiresAt: Date.now() + QR_LIFETIME_MS });
+      return json(res, 200, qr);
+    }
     if (path === '/api/login/check' && method === 'GET') {
-      const result = await music.checkQr(text(url.searchParams.get('key'), 256, '登录标识'));
-      if (result.status === 'authorized' && result.cookie) { store.set('musicCookie', result.cookie); statusAt = 0; }
+      const key = text(url.searchParams.get('key'), 256, '登录标识');
+      const login = pendingLogins.get(key);
+      if (!login || login.expiresAt <= Date.now()) {
+        pendingLogins.delete(key); return json(res, 200, { status: 'expired' });
+      }
+      const result = await music.checkQr(key);
+      if (closing || login.revision !== authRevision || pendingLogins.get(key) !== login || login.expiresAt <= Date.now()) {
+        return json(res, 200, { status: 'expired' });
+      }
+      if (result.status === 'authorized' && result.cookie) {
+        musicSession.set(result.cookie);
+        invalidateLogin();
+      } else if (result.status === 'expired') pendingLogins.delete(key);
       return json(res, 200, { status: result.status, ...(result.nickname ? { nickname: result.nickname } : {}) });
     }
     if (path === '/api/logout' && method === 'POST') {
-      await body(req); store.set('musicCookie', ''); statusAt = 0; return json(res, 200, { ok: true });
+      await body(req); musicSession.clear(); invalidateLogin(); return json(res, 200, { ok: true });
     }
     if (path === '/api/tts' && method === 'POST') {
       const data = await body(req);

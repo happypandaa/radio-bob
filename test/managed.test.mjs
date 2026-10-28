@@ -65,7 +65,7 @@ test('managed waits for initialize, authenticates every route, isolates data, an
   assert.deepEqual(await readdir(f.temp), ['fake-source']);
   const base = await f.start();
   const headers = { Authorization: `Bearer ${f.token}` };
-  for (const path of ['/_platform/health', '/api/state', '/api/events', '/', '/app.js', '/tts/' + 'a'.repeat(64) + '.mp3']) {
+  for (const path of ['/_platform/health', '/api/state', '/api/events', '/api/login/qr', '/api/login/check?key=artificial', '/', '/app.js', '/tts/' + 'a'.repeat(64) + '.mp3']) {
     assert.equal((await fetch(base + path)).status, 401, path);
   }
   assert.equal((await fetch(base + '/api/state', { headers: { Authorization: 'Bearer wrong' } })).status, 401);
@@ -76,11 +76,10 @@ test('managed waits for initialize, authenticates every route, isolates data, an
   const status = await (await fetch(base + '/api/status', { headers })).json();
   assert.equal(status.services.claude.ready, false);
   assert.notEqual(status.services.claude.model, 'must-not-load-sentinel');
-  assert.equal(status.services.music.loginEnabled, false);
+  assert.equal(status.services.music.loginEnabled, true);
   assert.equal(status.services.music.loggedIn, false);
-  assert.equal((await fetch(base + '/api/login/qr', { headers })).status, 403);
-  assert.equal((await fetch(base + '/api/login/check?key=artificial', { headers })).status, 403);
-  assert.equal((await fetch(base + '/api/logout', { method: 'POST', headers })).status, 403);
+  assert.deepEqual(await (await fetch(base + '/api/login/check?key=artificial', { headers })).json(), { status: 'expired' });
+  assert.equal((await fetch(base + '/api/logout', { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{}' })).status, 200);
   assert.equal((await fetch(base + '/', { headers })).status, 404);
   assert.equal((await fetch(base + '/app.js', { headers })).status, 404);
   const written = await fetch(base + '/api/taste', { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ text: '人工隔离品味' }) });

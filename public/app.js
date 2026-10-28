@@ -17,7 +17,7 @@ let autoVoice = true;
 let toastTimer;
 let qrTimer;
 let qrGeneration = 0;
-let qrChecking = false;
+let qrCheckingGeneration = null;
 let lastStateFingerprint = '';
 let favorites = [];
 let showingFavorites = false;
@@ -639,14 +639,16 @@ async function beginQr() {
   }
 }
 async function checkQr(key, generation) {
-  if (generation !== qrGeneration || !$('login-dialog').open || qrChecking) return;
-  qrChecking = true;
+  if (generation !== qrGeneration || !$('login-dialog').open || qrCheckingGeneration === generation) return;
+  qrCheckingGeneration = generation;
   try {
     const result = await api(`/api/login/check?key=${encodeURIComponent(key)}`, { timeout: 15000 });
     if (generation !== qrGeneration || !$('login-dialog').open) return;
     if (result.status === 'authorized') {
       stopQrPolling();
+      const authorizedGeneration = qrGeneration;
       await refreshStatus();
+      if (authorizedGeneration !== qrGeneration || !$('login-dialog').open) return;
       if (services?.music?.loggedIn) {
         renderLoggedIn();
         toast('网易云已连接，可以开始听歌了。');
@@ -670,11 +672,12 @@ async function checkQr(key, generation) {
     if (generation !== qrGeneration) return;
     $('login-status').textContent = error.message;
     $('refresh-qr').hidden = false;
-  } finally { qrChecking = false; }
+  } finally { if (qrCheckingGeneration === generation) qrCheckingGeneration = null; }
 }
 async function logout() {
   $('logout').disabled = true;
   try {
+    stopQrPolling();
     await post('/api/logout', {});
     if (services?.music) { services.music.loggedIn = false; delete services.music.nickname; }
     renderStatus();

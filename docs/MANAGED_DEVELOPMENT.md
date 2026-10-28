@@ -4,7 +4,7 @@
 
 ## 源码、构建与更新（2026-10-23）
 
-当前清单保留与既有本机登记一致的原始字节，暂不增加可选 `development` 字段；平台按兼容规则将仓库根作为源码和运行材料，使用无需编译的流程。Radio 的 `public/` 与 `server/` 已可直接运行，但仍需原有完整生产依赖。保留完整网易云 SDK、根目录 `package.json` 和锁文件，不裁剪 Windows 资源或另建运行包依赖。安装校验与不同系统上的实际运行验收由平台分别处理，保留文件不代表已经验证 Windows 运行。
+当前清单只保留 DeepSeek / Fish 两把密钥配置，不增加可选 `development` 字段；清单或资源更新后须通过平台同步到运行副本。平台按兼容规则将仓库根作为源码和运行材料，使用无需编译的流程。Radio 的 `public/` 与 `server/` 已可直接运行，但仍需原有完整生产依赖。保留完整网易云 SDK、根目录 `package.json` 和锁文件，不裁剪 Windows 资源或另建运行包依赖。安装校验与不同系统上的实际运行验收由平台分别处理，保留文件不代表已经验证 Windows 运行。
 
 在应用详情“开发工具”中打开此源码、复制 AI 接手说明或构建并更新；在“源码版本”中保存本机 Git。构建成功后仍须明确确认更新。已安装实例保留数据和配置，源码变更不会直接覆盖运行副本。本机提交不等于远端备份，需要另行推送到已有远端。
 
@@ -29,7 +29,7 @@
 - `server/app.mjs` 提供业务服务器工厂，不在导入时打开存储或监听端口。
 - `server/index.mjs` 保留独立版入口，原 `scripts/dev.mjs` 及 `npm dev/start` 继续使用固定本地网页/音乐服务规则。
 - `server/managed.mjs` 是受管单入口；Node 24 的内置 SQLite 与现有业务逻辑保持，不改表、不读取原库。
-- AI 仍是现有 `server/claude.mjs` 的 Anthropic Messages 兼容 API；没有改为 OpenAI 协议。清单为新受管实例预填已验证的 DeepSeek 地址及 `deepseek-flash`，不读取或改写原独立实例的模型、配置或真实密钥。
+- AI 仍是现有 `server/claude.mjs` 的 Anthropic Messages 兼容 API；没有改为 OpenAI 协议。后端为新受管实例提供 DeepSeek 地址及 `deepseek-flash` 默认值，不读取或改写原独立实例的模型、配置或真实密钥。
 - `server/music.mjs` 默认仍走原 HTTP 传输；管理态改为 `music-sdk.mjs` 的同进程函数传输。它只加载所需模块，不载入 SDK `main.js/server.js`，不监听第二端口，不运行 SDK 版本检测或 npm。
 
 SDK 某些调用内部仍会按当前工作目录寻找 `.env`，因此受管入口必须先切换到隔离 `APP_TEMP_DIR`，设置系统临时目录，再动态加载 SDK。匿名临时令牌和请求辅助文件留在此目录。不得改为先 import SDK 后覆盖目录；SDK 日志内容可能带上游资料，管理态只发固定受限诊断到 stderr。
@@ -55,22 +55,18 @@ SDK 某些调用内部仍会按当前工作目录寻找 `.env`，因此受管入
 
 ## 配置、秘密与数据
 
-清单收敛为六项代码实际读取的环境变量，不引入第二套字段映射：
+清单只声明两项环境变量：
 
 | 环境变量 | 标准配置规则 | 代码用途 |
 | --- | --- | --- |
-| `ANTHROPIC_BASE_URL` | 必需；默认 `https://api.deepseek.com/anthropic` | AI Messages 接口基础地址。 |
-| `ANTHROPIC_API_KEY` | 必需、秘密，无默认值 | 仅交给后端的 AI API 凭据。 |
-| `CLAUDE_MODEL` | 必需；默认 `deepseek-flash` | 新受管实例的已验证模型。 |
-| `FISH_API_KEY` | 可选、秘密，无默认值 | 未配置时不请求语音，只显示文字。 |
-| `FISH_REFERENCE_ID` | 可选，无默认值 | 指定有权限使用的音色；省略时不发送 `reference_id`。 |
-| `FISH_MODEL` | 可选；默认 `s2.1-pro-free` | 明确指定语音模型，不自动切换计费型号。 |
+| `ANTHROPIC_API_KEY` | 必需、秘密，无默认值 | DeepSeek API 凭据，保留现有变量名。 |
+| `FISH_API_KEY` | 可选、秘密，无默认值 | 主持口播凭据；未配置时只显示文字并播放音乐。 |
 
-每项声明包含 `label/type/required/secret/description/howToGet/helpUrl`，普通配置可有 `default/placeholder/options`；AI 密钥的 `endpointField` 关联 AI 地址，秘密不能有默认值。Fish 地址固定为代码中的 `https://api.fish.audio/v1/tts`，没有声明代码未实现的 `FISH_BASE_URL`。Fish 的五种选项沿用实际允许列表，官方接口列出型号不等于当前账号具备权限或额度。
+后端默认使用 `https://api.deepseek.com/anthropic` 与 `deepseek-flash`；Fish 固定服务地址为 `https://api.fish.audio/v1/tts`，默认型号 `s2.1-pro-free`。两把密钥足以启动节目生成和口播，不发送 `reference_id`，由 Fish 处理默认音色。地址、模型和音色不出现在平台配置表单中。
 
-标准清单校验入口应先应用合法默认值，再检查必需 AI 配置，缺少 AI 密钥时不得启动 AI 版 Radio。这个门禁属于平台配置解析／启动前校验，不是向底层 `server/managed.mjs` 添加秘密保存逻辑。原生命周期测试可直接启动不带 AI 的子进程，并由本地健康检查确认初始化，不得把这一路径误当作标准配置验证。后续平台已接通按清单生成的配置表单、普通值修订与创建环境注入；按用户最新选择，秘密存入各应用本机槽 `configuration/credentials/`，目录0700、文件0600，是当前用户文件权限保护的明文，不是 macOS Keychain／系统加密库。平台不读删旧系统条目，不把秘密放进源码、分享或 Git；私有文件权限、归属或读取不符合要求时明确失败，不另找兜底路径。
+字段只包含 `label/type/required/secret/description/howToGet/helpUrl/placeholder`，不设置密钥默认值，不再关联未声明的 `endpointField`。平台须在启动前检查 DeepSeek 密钥。直接启动无密钥的子进程仅用于隔离生命周期测试，不表示标准配置已通过。
 
-`CLAUDE_MODE`、`ANTHROPIC_MODEL`、`ANTHROPIC_AUTH_TOKEN`、`CLAUDE_API_EFFORT`、`CLAUDE_CODE_EFFORT_LEVEL`、`CLAUDE_MAX_TOKENS` 与 `CLAUDE_STRUCTURED_OUTPUT` 不再要求普通用户填写；独立入口的旧读取与兼容顺序保留不变。受管新实例使用代码默认的 API 模式、输出预算及结构化输出判断，不导入原 `.env`。`PORT` 与 `NETEASE_API_BASE_URL` 不作为受管配置暴露：由动态端口和同进程音乐传输代替。
+平台把秘密保存在各应用本机槽 `configuration/credentials/`，目录 `0700`、文件 `0600`，是文件权限保护的明文。普通读取只显示“已设置”，不把密钥放入源码、分享包或 Git。旧独立入口的高级环境变量兼容读取保留，但平台不声明或注入它们；受管入口不导入原 `.env`。`PORT` 与 `NETEASE_API_BASE_URL` 仍由动态端口和同进程音乐传输代替。
 
 受管模式的库为 `APP_DATA_DIR/state.db`，品味为 `APP_DATA_DIR/profile/taste.md`；TTS 输出在缓存目录。`createStore` 的新增显式路径选项不改变独立版默认 `.data/state.db` 和 `user/taste.md`。
 
@@ -80,13 +76,13 @@ SDK 某些调用内部仍会按当前工作目录寻找 `.env`，因此受管入
 
 ## 验证
 
-下列既有测试和浏览器试用保留原证明范围。本次原生窗口规范更新仅改两份说明，未改清单、业务代码或用户数据；它本身不构成原生窗口／AI／音乐／语音的新验收。
+下列既有测试和浏览器试用保留原证明范围。本次配置收敛使用模拟接口验证默认参数，不能据此宣称真实账号、实际语音或原生窗口已重新验收。
 
-开发验证执行 `node --test test/*.test.mjs`。新增测试全部使用 `mkdtemp` 人工数据和动态端口，不读取原 `.env/.data/user`，不启动原 3000/8080。受管子进程加测试期源数据访问与外网请求拦截，使用人工 `.env` 哨兵验证不会从启动工作目录带入配置。配置一致性测试核对六项元信息，并通过真实业务工厂加模拟外部响应验证 AI 地址/密钥/模型与 Fish 密钥/音色/模型确实影响实际请求；平台解析器另行验证 AI 缺失阻断，不把模拟请求当作线上兼容或密钥可用证据。
+开发验证执行 `node --test test/*.test.mjs`。新增测试全部使用 `mkdtemp` 人工数据和动态端口，不读取原 `.env/.data/user`，不启动原 3000/8080。受管子进程加测试期源数据访问与外网请求拦截，使用人工 `.env` 哨兵验证不会从启动工作目录带入配置。配置一致性测试核对两项密钥元信息，并通过真实业务工厂加模拟外部响应验证只注入两把密钥时会使用正确的 DeepSeek/Fish 地址、模型与默认音色；平台解析器另行验证 AI 缺失阻断，不把模拟请求当作线上兼容或密钥可用证据。
 
 实际覆盖：初始化前无存储、十秒初始化超时、全路由认证、隔离目录写入、禁止静态与音乐账号、同实例心跳、正常停机/SSE、EOF、无效/超限/错误实例、五秒异常终止、同进程 SDK 离线二维码构造、原 HTTP 音乐单测及独立工厂的原 Origin/静态行为。它们不证明真实音乐搜索/登录/播放、AI/TTS 服务、完整桌面前端、打包与系统进程树已经可用。
 
-新增公钥回归使用人工 loader/发送函数和 Axios adapter，阻止真实请求，覆盖惰性与并发初始化、失败重试/错误不泄漏、取消不写残缺文件、文件权限，以及真实 SDK helper 获得超时、大小、重定向约束并清理拦截器。公钥回归完成时为 43/43；2026-10-20 六项配置收敛另增加三项检查，完整离线用例为 46/46 通过。该次配置验证未使用真实密钥、未请求线上 AI/语音服务，也未读取或修改原实例数据。
+新增公钥回归使用人工 loader/发送函数和 Axios adapter，阻止真实请求，覆盖惰性与并发初始化、失败重试/错误不泄漏、取消不写残缺文件、文件权限，以及真实 SDK helper 获得超时、大小、重定向约束并清理拦截器。此前公钥与配置回归已通过。相关验证未使用真实密钥、未请求线上 AI/语音服务，也未读取或修改原实例数据。
 
 独立真实匿名探测使用应用包内 Node、无系统 Node 的 PATH、空白隔离临时目录与空账号 Cookie，没有读取源码 `.env/.data/user`。搜索 `Beethoven Moonlight` 返回三首；曲目 `1434893542 / Moonlight Sonata / Ludwig van Beethoven` 成功解析为三十秒试听，媒体 Range 返回 HTTP 206、`audio/mpeg` 和 1024 字节。这证明当前网络环境中的匿名搜索、取地址与媒体可达，不证明浏览器完成解码、实际扬声器发声、完整曲目权限、扫码账号或 Fish 语音。
 

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A personal radio with a direct AI API, Fish Audio / Doubao / Gemini speech, and a local music adapter.",
+  "description": "A personal radio with a direct AI API, Fish Audio speech, and a local music adapter.",
   "engines": {
     "node": ">=24"
   },

@@ -4,7 +4,7 @@
 
 ## 平台受管 Node 试验
 
-新增 `server/managed.mjs` 和实验 `local-app.json`，用于验证平台统一启动、停止、状态与私有数据目录。**该清单不是当前可安装格式，也不是完整可分发包**：运行依赖仍位于原项目根 `node_modules`，前端目前使用站点根 `/api`、`/tts`，尚未完成平台代理基址适配、安装/备份/更新/OS 凭据库及真实账号链路验收。
+`server/managed.mjs` 和 `local-app.json` 支持平台从源码构建、安装和更新独立运行副本，由平台管理启动、停止、配置与私有数据目录。网页与后端由同实例代理连接；构建需要安装生产依赖。平台安装更新、真实语音和账号链路的验收范围见受管说明，自动化测试不代表所有线上服务与平台版本均已验证。
 
 原 `npm run dev` / `npm start` 仍按下文独立运行，不读取实验清单。受管入口不加载原项目 `.env`、`.data` 或 `user/taste.md`；只有收到实例初始化后才打开平台注入的隔离目录。网易云 SDK 在同一 Node 进程调用，不启动第二个音乐 HTTP 服务；所有后端 HTTP 路由均需实例认证，不提供静态网页。
 
@@ -14,9 +14,9 @@
 
 使用边界见[受管试验使用说明](docs/MANAGED_USER_GUIDE.md)，协议和验证方式见[开发说明](docs/MANAGED_DEVELOPMENT.md)。
 
-`local-app.json` 声明 AI 服务地址、AI 密钥、AI 模型，以及可选的语音服务和各供应商配置。语音可选择 Fish Audio、豆包语音、Gemini 或关闭，默认 Fish 以兼容原配置；仅使用所选服务的凭证，不会按已有密钥自动切换。所选服务未填密钥时仍可看文字串词和听音乐。AI 地址与模型预填已验证的 DeepSeek 兼容地址和 `deepseek-flash`，AI 密钥为必填且没有默认值。每项都有中文用途、不填影响、获取步骤及官方帮助链接；清单不包含真实密钥。AI 版标准入口需先完成清单校验，底层无密钥的生命周期测试不代表标准应用启动就绪。
+`local-app.json` 只需配置两把密钥：DeepSeek API Key（必填）和 Fish API Key（可选）。服务地址、模型和音色使用默认值；未填 Fish 密钥时仍可看文字串词和听音乐。清单只包含说明和官方帮助链接，不包含真实密钥。
 
-平台源码新增“查看新版应用说明”入口：先关闭 Radio，在原生管理窗口预览来源、后端和完整配置字段，再明确确认更新；保留同一实例的配置、密钥绑定和业务数据，不会自动启动。此按钮需要构建并运行新版平台，当前运行的旧平台尚未进行该原生交互验收。本轮已通过临时本地验证程序调用新核心方法更新实际 Radio 原实例的声明；这是核心更新验证，不是原生窗口点击。实例 ID、配置修订 `4` 和已设置的 AI Key 保留，返回 14 个配置字段且启动配置校验通过，未启动 Radio。
+平台使用时先关闭 Radio，在原生管理窗口通过“查看新版应用说明”或构建更新同步当前清单与资源，再保存密钥并重新打开。更新应保留同一实例的配置、密钥与业务数据；源码改动不会直接替换已安装的运行副本。
 
 ## 启动
 
@@ -37,42 +37,22 @@ npm run dev
 
 ## 独立运行配置
 
-以下是原独立运行入口的配置，保留历史变量兼容，不是平台首次配置表单。配置保存在项目根目录 `.env`，修改后重新启动。已有文件直接编辑；新机器上可以参考 `.env.example` 创建，保留自己填写的密钥。平台新实例的配置声明及不同默认模型见上面的受管说明，不读取这里的原实例配置。
+浏览器独立运行时，只需在项目根目录 `.env` 填写两把密钥，修改后重启。已有文件直接编辑；新机器可从 `.env.example` 创建，避免覆盖已有密钥。
 
-| 配置 | 用途 |
-| --- | --- |
-| `CLAUDE_MODE=api` | 直接请求 AI API；CLI 模式已移除，不启动 Claude Code 子进程。 |
-| `ANTHROPIC_BASE_URL` | Anthropic Messages 兼容接口根地址。此项目沿用 `https://api.deepseek.com/anthropic`；未配置时为官方 Anthropic 地址。 |
-| `CLAUDE_MODEL` | 明确指定模型；未填写时沿用启动环境的 `ANTHROPIC_MODEL`。当前为 `deepseek-v4-pro`。 |
-| `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` | 服务端 API Key 或 Bearer token，二者选择一项。优先使用 API Key；不读取 Claude Code 登录凭据。 |
-| `CLAUDE_API_EFFORT=max` | 当前沿用原配置的推理级别；也可从启动环境的 `CLAUDE_CODE_EFFORT_LEVEL` 继承。 |
-| `CLAUDE_MAX_TOKENS=8192` | 单次响应的最大 token 预算，包含模型思考所需空间；输出长度仍接受本地业务校验。 |
-| `CLAUDE_STRUCTURED_OUTPUT=auto` | 官方 Anthropic 启用原生结构化输出；DeepSeek 兼容接口使用原业务提示词和本地 JSON 校验。也可明确设置 `true` 或 `false`。 |
-| `TTS_PROVIDER=fish` | 主持口播服务：`fish`、`doubao`、`gemini` 或 `none`。默认 Fish；`none` 关闭语音。不会按已填写的密钥自动切换。 |
-| `FISH_API_KEY` | 仅 Fish：Fish Audio API Key。留空不生成 Fish 口播。 |
-| `FISH_MODEL=s2.1-pro-free` | 仅 Fish：语音模型；名称带 free 不保证可用性、额度或权限，以 Fish 服务为准。 |
-| `FISH_REFERENCE_ID` | 仅 Fish：有权使用的音色 reference ID；可以留空不指定音色，它不是密钥。 |
-| `DOUBAO_API_KEY` | 仅豆包：新版豆包语音控制台 API Key；不是方舟或 IAM Key，无需 App ID、Access Token、Secret Key。 |
-| `DOUBAO_RESOURCE_ID=seed-tts-2.0` | 仅豆包：语音合成 2.0 资源 ID，必须与已开通服务及音色匹配。声音复刻 2.0 使用 `seed-icl-2.0`。 |
-| `DOUBAO_SPEAKER=zh_female_vv_uranus_bigtts` | 仅豆包：Speaker ID，默认 Vivi 2.0；Key、服务和音色需在同一项目。 |
-| `GEMINI_API_KEY` | 仅 Gemini：Google AI Studio 的 Gemini API Key，无需 OAuth、App ID 或 Secret。 |
-| `GEMINI_TTS_MODEL=gemini-3.8-flash-tts` | 仅 Gemini：语音模型，也可选择 `gemini-3.8-flash-lite-tts`。 |
-| `GEMINI_TTS_VOICE=Kore` | 仅 Gemini：预置音色名称，不是声音克隆 ID 或其他供应商的音色 ID。 |
-| `GEMINI_TTS_STYLE` | 仅 Gemini：自然语言口播风格，默认“温暖、自然、松弛的中文电台主持口吻”。 |
-| `NETEASE_API_BASE_URL=http://127.0.0.1:3000` | 本地音乐接口地址。 |
-| `PORT=8080` | Radio Bob 端口。 |
+```dotenv
+ANTHROPIC_API_KEY=你的DeepSeek密钥
+FISH_API_KEY=你的Fish密钥
+```
 
-当前沿用原 Claude Code 配置背后的 DeepSeek V4 Pro 服务、API token 与 `max` 推理级别，直接调用 `/anthropic/v1/messages`。`[1m]` 是 Claude Code 的上下文标签，Node 请求会像原 CLI 一样移除该标签；底层模型保持 `deepseek-v4-pro`。业务系统提示词、音乐品味与历史的组织方式、节目 JSON 格式保持一致，生成内容仍可能因模型随机性及客户端差异而不同。
+`ANTHROPIC_API_KEY` 是现有环境变量名，在本项目中填写 DeepSeek API Key。默认请求 `https://api.deepseek.com/anthropic`，模型为 `deepseek-flash`。Fish 使用 `s2.1-pro-free`，不指定音色 ID，由 Fish 提供默认音色。Fish 密钥可留空，仍能使用文字和音乐。密钥仅在 Node 后端使用，不填进浏览器页面。
 
-API 凭据只在 Node 后端使用，可来自本地 `.env` 或启动环境。现有启动环境的 `ANTHROPIC_AUTH_TOKEN` 可继续使用，无需复制到浏览器。原 Claude Code 的订阅登录和 OAuth 会话不会被转换为 API Key。切换供应商时需同时核对地址、模型、认证和结构化输出支持，应用不会自动换模型或重试生成。
+运行端口仍默认为 `8080`，音乐接口为本机 `3000`。已有独立入口的高级环境变量兼容读取保留；如需采用上述默认值，可从旧 `.env` 移除自己曾填写的地址、模型和音色覆盖值。
 
 状态检查只确认 API 配置有效，尚未发起模型请求时不代表已验证远端连通。生成过程处理接口拒绝、输出截断、限流、超时、响应过大与 JSON 校验失败。思考内容不会进入业务记录；歌曲与口播仅在完整通过校验后使用。暂停、继续、切歌等本地控制仍无需请求模型。
 
-主持语音配置均可选。先设置 `TTS_PROVIDER`，再填写该服务的密钥和参数；其他供应商的配置可以留空。缺少所选服务的密钥或合成失败时，歌曲与文字串词仍可使用；`none` 关闭主持语音。应用不会因为另一家服务填了密钥而切换，也不会自动改用其他计费模型。密钥只在 Node 后端使用。启用语音时，点击消息下方的“REPLAY”可以重试合成或播放已缓存口播。
+主持语音仅使用 Fish Audio。配置 API 密钥后可用默认音色生成口播；不填密钥或在界面关闭自动口播时，仍可使用音乐与文字。不会自动更换语音模型。点击消息下方的“REPLAY”可以重试合成或播放已缓存口播。
 
-- Fish：到 [Fish Audio API Keys](https://fish.audio/app/api-keys/) 创建 Key，按[官方快速入门](https://docs.fish.audio/developer-guide/getting-started/quickstart)获取有权使用的音色 reference ID。
-- 豆包：在[豆包语音新版控制台](https://console.volcengine.com/speech/new/setting/apikeys?projectName=default)选择项目，先在“开通管理”开通语音合成 2.0，再在“API管理”创建 Key，并从同一项目[音色库](https://console.volcengine.com/speech/new/voices?projectName=default)复制 Speaker ID。使用豆包语音 Key，不是火山方舟聊天模型 Key 或 IAM AccessKey；不需要 App ID、Access Token、Secret Key。默认官方 2.0 音色配 `seed-tts-2.0`；复刻 2.0 音色配 `seed-icl-2.0`，且需开通对应服务。[官方配置指引](https://docs.volcengine.com/docs/DoubaoVoice/console-guidance?lang=zh)
-- Gemini：到 [Google AI Studio](https://aistudio.google.com/apikey) 创建 Gemini API Key，只需这把 Key，无需 OAuth、App ID 或 Secret。`Kore` 是 Google 的预置音色名称，其他音色见[官方语音说明](https://ai.google.dev/gemini-api/docs/speech-generation)。实际发起请求的电脑或服务器须位于[支持地区](https://ai.google.dev/gemini-api/docs/available-regions)；本机运行时指运行 Radio 的电脑所在地区，当前列表不含中国大陆。免费额度、限额与[计费](https://ai.google.dev/gemini-api/docs/pricing)以 Google 当前政策和项目额度为准。
+- Fish：到 [Fish Audio API Keys](https://fish.audio/app/api-keys/) 创建 Key，不需要再填写音色 ID。
 
 ## 音乐怎么接
 
@@ -96,7 +76,7 @@ API 凭据只在 Node 后端使用，可来自本地 `.env` 或启动环境。�
 | `.env` | 服务密钥与配置，已被 Git 忽略。 |
 | `user/taste.md` | 你保存的音乐品味。 |
 | `.data/state.db` | 聊天、播放记录、节目计划、队列和网易云登录会话。 |
-| `.data/tts/` | 缓存的主持音频，Fish / 豆包为 MP3、Gemini 为 WAV；按供应商、内容、模型、音色及风格区分复用。 |
+| `.data/tts/` | Fish 主持口播 MP3 缓存；按内容、模型和音色区分复用。 |
 | `.data/claude/` | 原 CLI 的历史工作目录；升级保留，新 API 模式不再创建或使用。 |
 | `.data/music/` | 音乐服务工作目录与临时数据。 |
 
@@ -110,7 +90,7 @@ API 凭据只在 Node 后端使用，可来自本地 `.env` 或启动环境。�
 npm test
 ```
 
-自动化测试使用模拟服务和临时目录，不调用真实 AI 或各语音供应商的生成服务，也不使用真实密钥。覆盖 API 请求地址、认证、模型与提示词、上下文、结构化输出兼容、拒绝/截断、错误脱敏、超时和响应限额，以及既有音乐、语音和存储行为。
+自动化测试使用模拟服务和临时目录，不调用真实 AI 或 Fish 生成服务，也不使用真实密钥。覆盖 API 请求地址、认证、模型与提示词、上下文、结构化输出兼容、拒绝/截断、错误脱敏、超时和响应限额，以及既有音乐、语音和存储行为。
 
 ## API 迁移验证
 
@@ -130,18 +110,20 @@ npm test
 
 ### Bob DJ 角色（2026-10-22）
 
-顶部品牌、DJ 资料卡和聊天消息使用原创几何电台头像 `public/assets/bob-avatar.svg`，保留透明背景与像素边缘渲染。公开版本已替换电影角色参考头像，移除旧猫头像与截图提取纹理。
+顶部品牌、DJ 资料卡和聊天消息使用恢复的 Bob 像素头像 `public/assets/bob-pixel-avatar.png`，保留透明背景与像素边缘渲染。该头像基于用户提供的角色参考制作，不属于本项目 MIT 授权范围；来源见素材说明。
 
 `server/claude.mjs` 的实际 AI 请求已接入 Bob 角色：温厚、松弛、简短的中文口播，以 Grateful Dead、The Incredible String Band、Muddy Waters 为音乐品味锚点，同时优先回应用户需求。保留每次 1–5 首、默认 3 首、30–100 字口播和四字段 JSON 契约；AI 先推荐，应用随后验证曲库与可播性。新设定用于之后生成的节目，已有聊天与队列保留，没有数据迁移或 schema 变更。
 
 本次验证：50/50 自动化测试通过，前后端 JavaScript 语法检查通过；本机界面及头像资源均返回 HTTP 200，浏览器确认顶部、聊天和资料卡显示新头像。未发起真实模型选曲或 Fish 语音合成请求。
 
-### 多语音服务接入（2026-10-23）
+### Fish 语音与配置
 
-增加 Fish Audio、豆包语音、Gemini 和关闭语音的显式选择，并保留 Fish 默认值。配置说明区分各服务的密钥、音色与模型，音频缓存支持 MP3 和 WAV。此次自动化测试 74/74 通过，使用模拟服务与临时目录，没有使用真实语音密钥或调用真实语音生成 API；服务商权限、地区、额度及实际音质仍需在对应账号下验证。
-
-同实例声明更新已通过新核心方法应用于实际 Radio，未通过原生窗口点击：更新前精确核对旧登记摘要与 Git 旧清单相等，来源、应用、网页和后端声明不变，原 6 项配置语义不变，新增 8 项全部可选。更新后配置 JSON 字节不变，`data/`、`cache/`、`runs/` 和凭证文件已检查的设备号、inode、大小、修改时间和权限元数据不变；没有读取真实 Key 明文，也没有启动 Radio。平台实际解析器已接受新清单，相关帮助链接限制有回归覆盖。新增核心检查 9 项、旧登记检查 10 项、界面检查 32 项通过，前端构建和 Tauri 检查通过；新增按钮仍需新版平台构建与原生窗口人工验收。
+主持口播仅保留 Fish Audio；平台与独立入口都只需填写 DeepSeek 和 Fish 两把密钥，其他参数使用默认值。已有 Fish 音频缓存继续复用，未填 Fish 密钥时文字与音乐仍可用。自动化检查使用模拟接口与临时目录，不使用真实语音密钥。
 
 ## License
 
 Original project code and original vector assets are licensed under the [MIT License](LICENSE). Third-party fonts and icons retain their own licenses; see [asset credits](public/assets/ASSETS.md).
+
+### 两项配置与头像回归（2026-10-28）
+
+平台只展示 DeepSeek API Key 与 Fish API Key。受管运行忽略旧版已删除的地址、模型和音色字段，统一使用默认值；独立运行保留显式环境覆盖兼容。原 Bob 像素头像已恢复，静态资源回归核对品牌、聊天与资料卡资源、字体、纹理和图标。完整离线测试 59 项通过，新增旧配置迁移检查及受管回归 18 项通过；浏览器以隔离临时数据检查了深浅主题、资料卡、品味保存、模拟曲库搜索和队列。没有调用真实 AI/Fish 合成，也没有修改原业务数据。

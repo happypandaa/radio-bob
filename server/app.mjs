@@ -9,14 +9,17 @@ import { createTtsClientFromEnv } from './tts.mjs';
 import { controlIntent } from './router.mjs';
 
 export function createRadioApplication({ root, env = process.env, dataDir, profileDir, cacheDir = join(root, '.data', 'tts'), musicTransport, managed } = {}) {
+// Managed instances use the two declared keys; obsolete saved options must not
+// change the default service, model or voice after an application update.
+if (managed) env = { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY, FISH_API_KEY: env.FISH_API_KEY };
 const store = createStore(root, { dataDir, profileDir });
 const structuredOutput = env.CLAUDE_STRUCTURED_OUTPUT || 'auto';
 const claude = createClaudeClient({
   mode: env.CLAUDE_MODE || 'api',
   apiKey: env.ANTHROPIC_API_KEY,
   authToken: env.ANTHROPIC_AUTH_TOKEN,
-  baseUrl: env.ANTHROPIC_BASE_URL,
-  model: env.CLAUDE_MODEL || env.ANTHROPIC_MODEL,
+  baseUrl: env.ANTHROPIC_BASE_URL || 'https://api.deepseek.com/anthropic',
+  model: env.CLAUDE_MODEL || env.ANTHROPIC_MODEL || 'deepseek-flash',
   effort: env.CLAUDE_API_EFFORT || env.CLAUDE_CODE_EFFORT_LEVEL,
   maxTokens: env.CLAUDE_MAX_TOKENS ? Number(env.CLAUDE_MAX_TOKENS) : 8192,
   structuredOutput: structuredOutput === 'true' ? true : structuredOutput === 'false' ? false : structuredOutput,
@@ -74,7 +77,7 @@ async function serviceStatus(refresh = false) {
     claude: brain.status === 'fulfilled' ? brain.value : { ready: false, mode: 'api', message: '无法连接 AI 接口。' },
     tts: tts.status,
     // Retain the old field for clients that still display Fish status.
-    fish: tts.status.provider === 'fish' ? tts.status : { ready: false, model: env.FISH_MODEL || 's2.1-pro-free' },
+    fish: tts.status,
     music: { ready: musicReady.status === 'fulfilled' && musicReady.value, loggedIn: account.status === 'fulfilled' && account.value.loggedIn, ...(managed ? { loginEnabled: false, message: '受管试验暂不接入真实音乐账号。' } : {}), ...(account.status === 'fulfilled' && account.value.nickname ? { nickname: account.value.nickname } : {}) }
   } };
   statusAt = Date.now();
@@ -201,7 +204,7 @@ async function handle(req, res) {
             return matches.find(item => normalize(item.title) === normalize(song.title) && normalize(item.artist).includes(normalize(song.artist))) || null;
           })),
           tts.configured ? tts.synthesize(plan.say).catch(error => ({ error: error.message }))
-            : Promise.resolve(tts.status.provider === 'none' ? { disabled: true } : { error: `${tts.status.message} 当前使用文字串词。` })
+            : Promise.resolve({ error: `${tts.status.message} 当前使用文字串词。` })
         ]);
         const tracks = [...new Map(found.filter(x => x.status === 'fulfilled' && x.value).map(x => [x.value.id, x.value])).values()];
         const missing = found.filter(x => x.status === 'rejected' || !x.value).length;

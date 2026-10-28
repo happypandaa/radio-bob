@@ -7,9 +7,9 @@ final result: passed
 The requested software UI is represented by the user's three screenshots, not the different landing-page demo at https://mmguo.dev/claudio-fm/. The implementation is the existing functional app at http://localhost:8080/.
 
 Original screenshots (2522 × 3152 px each):
-- Dark: `/var/folders/xq/h5rbpzrs7710csq2h8mk3h180000gn/T/codex-clipboard-ec2cd4da-0f01-4826-bfdb-28b79ee86cac.png`
-- Light: `/var/folders/xq/h5rbpzrs7710csq2h8mk3h180000gn/T/codex-clipboard-8b104548-314e-481b-90f9-25738addc4fb.png`
-- Profile: `/var/folders/xq/h5rbpzrs7710csq2h8mk3h180000gn/T/codex-clipboard-2cf8c400-7abe-4dae-9340-de1c8055d59c.png`
+- Dark: `work/design-reference/source-screenshot.png`
+- Light: `work/design-reference/source-screenshot.png`
+- Profile: `work/design-reference/source-screenshot.png`
 
 Working copies and all evidence are in `radio-bob/work/design-reference/`.
 

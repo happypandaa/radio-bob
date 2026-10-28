@@ -154,11 +154,11 @@ function toggleFavorite() {
 }
 
 function renderStatus() {
-  for (const [key, label] of [['claude', 'AI'], ['tts', 'Voice'], ['music', 'Music']]) {
+  for (const [key, label] of [['claude', 'AI'], ['tts', 'Fish'], ['music', 'Music']]) {
     const item = $(`${key}-status`);
     const service = services?.[key] || (key === 'tts' ? services?.fish : null);
     item.classList.toggle('ready', Boolean(service?.ready));
-    item.classList.toggle('failed', Boolean(services && !service?.ready && service?.provider !== 'none'));
+    item.classList.toggle('failed', Boolean(services && !service?.ready));
     const description = !services ? '正在检查' : service?.message || (service?.ready ? '已就绪' : '未就绪');
     item.title = `${label}：${description}`;
     item.setAttribute('aria-label', `${label}：${description}`);
@@ -174,8 +174,7 @@ function renderStatus() {
 }
 function voiceLabel() {
   const voice = services?.tts || services?.fish;
-  return voice?.provider === 'none' ? '口播已关闭' : services && !voice?.ready ? '口播尚未就绪'
-    : voice?.label ? `DJ 口播 · ${voice.label}` : 'DJ 口播';
+  return services && !voice?.ready ? 'Fish 口播尚未就绪' : 'DJ 口播 · Fish Audio';
 }
 async function refreshStatus(showFeedback = false) {
   $('refresh-status').disabled = true;
@@ -185,10 +184,10 @@ async function refreshStatus(showFeedback = false) {
     renderStatus();
     if (showFeedback) {
       const missing = [['claude', 'AI'], ['tts', '语音'], ['music', '音乐']]
-        .filter(([key]) => key === 'tts' ? !(services.tts || services.fish)?.ready && services.tts?.provider !== 'none' : !services[key]?.ready)
+        .filter(([key]) => key === 'tts' ? !(services.tts || services.fish)?.ready : !services[key]?.ready)
         .map(([, label]) => label);
       toast(missing.length ? `${missing.join('、')}尚未就绪，请检查本地配置。`
-        : services.tts?.provider === 'none' ? 'AI 配置和音乐服务已就绪，语音已关闭。' : 'AI 配置、语音和音乐服务均已就绪。');
+        : 'AI 配置、Fish 口播和音乐服务均已就绪。');
     }
   } catch (error) {
     if (showFeedback) toast(error.message);
@@ -284,7 +283,7 @@ function renderMessages() {
     const article = node('article', `message ${isUser ? 'user' : 'assistant'}${message === pendingUser ? ' pending' : ''}`);
     const avatar = isUser ? icon('user') : node('img');
     avatar.classList.add('message-avatar');
-    if (!isUser) { avatar.src = '/assets/bob-avatar.svg'; avatar.alt = 'Bob 的像素头像'; }
+    if (!isUser) { avatar.src = '/assets/bob-pixel-avatar.png'; avatar.alt = 'Bob 的像素头像'; }
     const messageBody = node('div', 'message-body');
     const head = node('div', 'message-head');
     const stamp = node('time', '', timeLabel(message.createdAt));

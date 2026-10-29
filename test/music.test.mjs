@@ -49,7 +49,7 @@ test('resolve preserves preview restrictions and never requests unblocking', asy
     id: 123, code: 200, url: 'https://example.com/trial.mp3', time: 180000,
     freeTrialInfo: { start: 30, end: 60 },
   }] }, { code: 200, data: [{ id: 123, code: 200, url: 'https://example.com/song.mp3', freeTrialInfo: null, time: 180000 }] }]);
-  assert.deepEqual(await client.resolve('123'), { url: 'https://example.com/trial.mp3', preview: true, durationMs: 30000 });
+  assert.deepEqual(await client.resolve('123'), { url: 'https://example.com/trial.mp3', preview: true, durationMs: 30000, previewStartMs: 30000 });
   assert.deepEqual(await client.resolve('123'), { url: 'https://example.com/song.mp3', preview: false, durationMs: 180000 });
   assert.equal(calls[0].parsedBody.unblock, 'false');
   assert.equal(calls[0].parsedBody.level, 'standard');
@@ -63,7 +63,7 @@ test('official NetEase HTTP media upgrades to HTTPS without changing signatures 
     freeTrialInfo: { start: 30, end: 60 },
   }] }]);
   assert.deepEqual(await client.resolve('123'), {
-    url: `https://m802.music.126.net${signedPath}`, preview: true, durationMs: 30000,
+    url: `https://m802.music.126.net${signedPath}`, preview: true, durationMs: 30000, previewStartMs: 30000,
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].parsedBody.unblock, 'false');

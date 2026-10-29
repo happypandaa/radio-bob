@@ -23,6 +23,25 @@ let favorites = [];
 let showingFavorites = false;
 let libraryOpen = false;
 let chatScrollBeforeLibrary = 0;
+// A "segment" is Bob speaking and then starting a set of songs. Any explicit
+// listener action bumps the token so a pending segment never overrides it.
+let segmentToken = 0;
+let introPhase = false;
+let queueFinished = false;
+let fading = false;
+let outro = null;
+const OUTRO_LEAD_SECONDS = 40;
+// Favorites live in NetEase "我喜欢的音乐" when signed in, otherwise in this browser.
+// The two lists are deliberately never synchronised.
+let favoriteSource = 'local';
+let remoteFavorites = [];
+let remoteLikedIds = new Set();
+let remoteFavoritesState = 'idle';
+let lyric = { trackId: null, status: 'idle', lines: [] };
+let renderedLyricKey = '';
+let lyricIndex = -2;
+let previewStartMs = 0;
+const lyricCache = new Map();
 
 function readPreference(key, fallback) {
   try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
@@ -135,22 +154,59 @@ function setLibraryOpen(open) {
   if (open || wasOpen) scroll.scrollTo({ top: open ? 0 : chatScrollBeforeLibrary, behavior: 'instant' });
 }
 
+function isFavorite(track) {
+  if (!track) return false;
+  return favoriteSource === 'netease' ? remoteLikedIds.has(track.id) : favorites.some(item => item.id === track.id);
+}
 function renderFavorite() {
-  const saved = Boolean(activeTrack && favorites.some(track => track.id === activeTrack.id));
+  const saved = isFavorite(activeTrack);
   $('favorite').disabled = !activeTrack;
   $('favorite').classList.toggle('saved', saved);
   $('favorite').setAttribute('aria-pressed', String(saved));
-  $('favorite').setAttribute('aria-label', saved ? '取消收藏当前歌曲' : '收藏当前歌曲');
+  const target = favoriteSource === 'netease' ? '网易云「我喜欢的音乐」' : '收藏';
+  $('favorite').setAttribute('aria-label', saved ? `从${target}移除当前歌曲` : `把当前歌曲加入${target}`);
 }
 
-function toggleFavorite() {
+async function toggleFavorite() {
   if (!activeTrack) return;
-  const exists = favorites.some(track => track.id === activeTrack.id);
-  favorites = exists ? favorites.filter(track => track.id !== activeTrack.id) : [...favorites, activeTrack];
+  const track = activeTrack;
+  const exists = isFavorite(track);
+  if (favoriteSource === 'netease') {
+    $('favorite').disabled = true;
+    try {
+      await post('/api/favorites', { track, like: !exists });
+      if (exists) { remoteLikedIds.delete(track.id); remoteFavorites = remoteFavorites.filter(item => item.id !== track.id); }
+      else { remoteLikedIds.add(track.id); remoteFavorites = [track, ...remoteFavorites.filter(item => item.id !== track.id)]; }
+      toast(exists ? '已从网易云「我喜欢的音乐」移除。' : '已加到网易云「我喜欢的音乐」，点击 FAV 查看。');
+    } catch (error) { toast(error.message); }
+    finally { renderFavorite(); if (showingFavorites) renderQueue(); }
+    return;
+  }
+  favorites = exists ? favorites.filter(item => item.id !== track.id) : [...favorites, track];
   savePreference('radio-bob-favorites', JSON.stringify(favorites));
   renderFavorite();
   if (showingFavorites) renderQueue();
   toast(exists ? '已从收藏中移除。' : '已收藏，点击 FAV 查看。');
+}
+async function refreshFavorites() {
+  const signedIn = Boolean(services?.music?.loggedIn);
+  favoriteSource = signedIn ? 'netease' : 'local';
+  if (!signedIn) { remoteFavorites = []; remoteLikedIds = new Set(); remoteFavoritesState = 'idle'; renderFavorite(); if (showingFavorites) renderQueue(); return; }
+  remoteFavoritesState = 'loading';
+  if (showingFavorites) renderQueue();
+  try {
+    const data = await api('/api/favorites', { timeout: 30000 });
+    if (data.source === 'netease') {
+      remoteFavorites = normalizeTracks(data.tracks);
+      remoteLikedIds = new Set([...(Array.isArray(data.ids) ? data.ids.map(String) : []), ...remoteFavorites.map(track => track.id)]);
+      remoteFavoritesState = 'ready';
+    } else remoteFavoritesState = 'error';
+  } catch (error) {
+    remoteFavoritesState = 'error';
+    if (showingFavorites) toast(error.message);
+  }
+  renderFavorite();
+  if (showingFavorites) renderQueue();
 }
 
 function renderStatus() {
@@ -180,8 +236,10 @@ async function refreshStatus(showFeedback = false) {
   $('refresh-status').disabled = true;
   try {
     const data = await api('/api/status', { timeout: 30000 });
+    const wasSignedIn = Boolean(services?.music?.loggedIn);
     services = data.services || {};
     renderStatus();
+    if (Boolean(services.music?.loggedIn) !== wasSignedIn || (services.music?.loggedIn && remoteFavoritesState === 'idle')) void refreshFavorites();
     if (showFeedback) {
       const missing = [['claude', 'AI'], ['tts', '语音'], ['music', '音乐']]
         .filter(([key]) => key === 'tts' ? !(services.tts || services.fish)?.ready : !services[key]?.ready)
@@ -234,6 +292,7 @@ function makeTrackRow(track, index, mode = 'queue') {
   play.title = '播放这首';
   play.append(icon('play'));
   play.addEventListener('click', async () => {
+    cancelSegment();
     if (!state.queue.some(item => item.id === track.id)) {
       const added = await addTracks([track], 'append');
       if (!added) return;
@@ -257,10 +316,16 @@ function makeTrackRow(track, index, mode = 'queue') {
   return row;
 }
 function renderQueue() {
-  const tracks = showingFavorites ? favorites : state.queue;
+  const remote = favoriteSource === 'netease';
+  const tracks = showingFavorites ? (remote ? remoteFavorites : favorites) : state.queue;
   $('queue-count').textContent = tracks.length;
-  $('queue-tab').textContent = showingFavorites ? 'FAVORITES' : 'QUEUE';
-  $('queue-empty').firstElementChild.textContent = showingFavorites ? '还没有收藏。播放喜欢的歌时，点击爱心保存。' : '队列还空着。告诉 Bob 你想听什么，或自己找一首。';
+  $('queue-tab').textContent = showingFavorites ? (remote ? 'FAVORITES · 网易云' : 'FAVORITES') : 'QUEUE';
+  $('queue-empty').firstElementChild.textContent = !showingFavorites ? '队列还空着。告诉 Bob 你想听什么，或自己找一首。'
+    : !remote ? '还没有收藏。播放喜欢的歌时，点击爱心保存。'
+      : remoteFavoritesState === 'loading' ? '正在读取你在网易云的红心歌曲…'
+        : remoteFavoritesState === 'error' ? '网易云红心歌曲暂时没读到，稍后点 FAV 再试。'
+          : '网易云「我喜欢的音乐」还是空的。播放喜欢的歌时，点爱心加进去。';
+  renderQuickReplies();
   $('queue-empty').hidden = tracks.length > 0;
   $('queue-list').replaceChildren(...tracks.map((track, index) => makeTrackRow(track, index)));
   $('show-favorites').setAttribute('aria-pressed', String(showingFavorites));
@@ -291,6 +356,7 @@ function renderMessages() {
     const footer = node('div', 'message-footer');
     footer.append(stamp);
     messageBody.append(head, node('div', 'message-content', message.content || ''));
+    if (!isUser && message.note) messageBody.append(node('p', 'message-note', message.note));
     if (!isUser && message.content) {
       const button = node('button', 'speech-button');
       button.type = 'button';
@@ -314,11 +380,32 @@ function renderMessages() {
     const tracks = normalizeTracks(message.tracks);
     if (tracks.length) {
       const list = node('details', 'message-tracks');
-      list.append(node('summary', '', `${tracks.length} ${tracks.length === 1 ? 'TRACK' : 'TRACKS'}`));
+      const summary = node('summary');
+      const covers = node('span', 'summary-covers');
+      for (const track of tracks.slice(0, 4)) {
+        const tile = node('span', 'summary-cover');
+        if (track.cover) {
+          const image = node('img');
+          image.src = coverUrl(track.cover, 64);
+          image.alt = '';
+          image.loading = 'lazy';
+          image.addEventListener('error', () => image.remove(), { once: true });
+          tile.append(image);
+        }
+        covers.append(tile);
+      }
+      summary.append(covers, node('span', '', `${tracks.length} ${tracks.length === 1 ? 'TRACK' : 'TRACKS'}`));
+      summary.title = tracks.map(track => `${track.title} - ${track.artist}`).join('\n');
+      list.append(summary);
       const rows = node('div', 'message-track-list');
       rows.append(...tracks.map((track, index) => makeTrackRow(track, index, 'message')));
       list.append(rows);
-      footer.append(list);
+      const playAll = node('button', 'speech-button play-all');
+      playAll.type = 'button';
+      playAll.setAttribute('aria-label', `播放这一组 ${tracks.length} 首歌`);
+      playAll.append(icon('play'), node('span', '', 'PLAY ALL'));
+      playAll.addEventListener('click', () => playSet(tracks));
+      footer.append(playAll, list);
     }
     messageBody.append(footer);
     article.append(avatar, messageBody);
@@ -341,6 +428,7 @@ async function addTracks(tracks, mode = 'append') {
   } catch (error) { toast(error.message); return false; }
 }
 function renderNowPlaying() {
+  renderStage();
   $('current-title').textContent = activeTrack?.title || 'No track selected';
   $('current-artist').textContent = activeTrack?.artist || '';
   const cover = activeTrack?.cover;
@@ -369,12 +457,15 @@ function updateTransport() {
   document.querySelector('.player-panel').classList.toggle('is-playing', playing);
   $('air-status').classList.toggle('live', playing || speaking);
   $('air-label').textContent = playing || speaking ? 'ON AIR' : 'STANDBY';
-  $('playback-label').textContent = loadingTrack ? 'LOADING' : playing ? 'PLAYING' : activeTrack ? 'PAUSED' : 'STANDBY';
+  $('playback-label').textContent = introPhase ? 'UP NEXT · BOB ON AIR' : loadingTrack ? 'LOADING' : playing ? 'PLAYING'
+    : queueFinished ? 'END OF SET' : activeTrack ? 'PAUSED' : 'STANDBY';
   $('stop').disabled = false;
   $('profile-air').textContent = playing || speaking ? 'LIVE' : 'IDLE';
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : activeTrack ? 'paused' : 'none';
+  renderStage();
 }
 function updateMusicVolume() {
+  if (fading) return;
   music.volume = Math.min(1, Math.max(0, userVolume * (!speech.paused && !speech.ended ? 0.22 : 1)));
 }
 async function reportPlayer(action) {
@@ -382,10 +473,12 @@ async function reportPlayer(action) {
   try { await post('/api/player', { action, trackId: activeTrack.id, positionMs: Math.round((music.currentTime || 0) * 1000) }); }
   catch { /* A reporting failure must not interrupt audio. */ }
 }
-async function playTrack(track) {
+async function playTrack(track, prepared) {
   if (!track) return;
   const request = ++musicRequest;
   loadingTrack = true;
+  queueFinished = false;
+  renderQuickReplies();
   music.pause();
   music.removeAttribute('src');
   music.load();
@@ -396,12 +489,15 @@ async function playTrack(track) {
   $('seek').value = 0;
   $('seek').disabled = true;
   setNotice('');
+  previewStartMs = 0;
   renderNowPlaying();
   renderQueue();
   updateTransport();
+  void loadLyrics(track);
   try {
-    const result = await api(`/api/music/url/${encodeURIComponent(track.id)}`, { timeout: 40000 });
+    const result = await (prepared || resolveTrack(track));
     if (request !== musicRequest) return;
+    previewStartMs = Number(result.previewStartMs) || 0;
     const url = safeUrl(result.url);
     if (!url) throw new Error('这首歌暂时无法播放。可以尝试连接网易云账号，或换一首歌。');
     $('preview-badge').hidden = !result.preview;
@@ -428,6 +524,9 @@ async function togglePlayback() {
     pausePlayback();
     return;
   }
+  const skippingIntro = introPhase;
+  cancelSegment();
+  if (skippingIntro) { speechRequest += 1; speech.pause(); }
   if (music.src && activeTrack && !music.error) {
     try {
       await music.play();
@@ -439,6 +538,7 @@ function pausePlayback() {
   // Invalidate an in-flight URL lookup before it can start audio after a pause.
   musicRequest += 1;
   speechRequest += 1;
+  cancelSegment();
   loadingTrack = false;
   music.pause();
   speech.pause();
@@ -446,21 +546,140 @@ function pausePlayback() {
 }
 async function moveTrack(direction, ended = false) {
   if (!state.queue.length) return;
+  if (!ended) cancelSegment();
   const request = musicRequest;
   if (direction < 0 && music.currentTime > 3) { music.currentTime = 0; return; }
   const index = state.queue.findIndex(track => track.id === activeTrack?.id);
-  let next = index === -1 ? (direction > 0 ? 0 : state.queue.length - 1) : index + direction;
-  if (ended && next >= state.queue.length) {
-    setNotice('这一轮听完了。和 Bob 再聊聊，续上下一段音乐。');
-    updateTransport();
+  const next = index === -1 ? (direction > 0 ? 0 : state.queue.length - 1) : index + direction;
+  if (next >= state.queue.length) {
+    // The end of a set never wraps around: Bob closes it and asks what comes next.
+    if (!ended) { await reportPlayer('skip'); musicRequest += 1; loadingTrack = false; music.pause(); }
+    await handleQueueEnd();
     return;
   }
-  next = (next + state.queue.length) % state.queue.length;
   // Keep the user's chosen target stable if an SSE update replaces the queue.
-  const target = state.queue[next];
+  const target = state.queue[Math.max(0, next)];
   if (!ended) await reportPlayer('skip');
   if (request !== musicRequest) return;
   await playTrack(target);
+}
+function resolveTrack(track) {
+  return api(`/api/music/url/${encodeURIComponent(track.id)}`, { timeout: 40000 });
+}
+function cancelSegment() {
+  segmentToken += 1;
+  introPhase = false;
+}
+function currentPlayerState() {
+  if (introPhase || loadingTrack || (!music.paused && !music.ended)) return 'playing';
+  if (queueFinished || music.ended) return 'ended';
+  return music.getAttribute('src') ? 'paused' : 'idle';
+}
+function fadeOutMusic(duration = 700) {
+  if (music.paused || music.ended) return Promise.resolve();
+  return new Promise(resolve => {
+    const startVolume = music.volume;
+    const began = performance.now();
+    fading = true;
+    // Timers keep running in a background tab, unlike animation frames.
+    const step = () => {
+      const progress = Math.min(1, (performance.now() - began) / duration);
+      music.volume = startVolume * (1 - progress);
+      if (progress < 1 && !music.paused) { setTimeout(step, 40); return; }
+      music.pause();
+      fading = false;
+      updateMusicVolume();
+      resolve();
+    };
+    step();
+  });
+}
+function speakAndWait(url) {
+  return new Promise(resolve => {
+    const events = ['ended', 'pause', 'error'];
+    const done = () => { for (const name of events) speech.removeEventListener(name, done); resolve(); };
+    playSpeech(url).then(started => {
+      if (!started || speech.paused || speech.ended) return resolve();
+      for (const name of events) speech.addEventListener(name, done);
+    }, error => { toast(error.message); resolve(); });
+  });
+}
+/** Bob introduces a new set, then the first song starts. */
+async function startSegment(tracks, speechUrl) {
+  if (!tracks.length) return;
+  cancelSegment();
+  const token = segmentToken;
+  outro = null;
+  queueFinished = false;
+  // Drop any in-flight lookup for the previous song, then prepare the new one while Bob talks.
+  musicRequest += 1;
+  loadingTrack = false;
+  const first = tracks[0];
+  const prepared = resolveTrack(first);
+  prepared.catch(() => {});
+  await fadeOutMusic();
+  if (token !== segmentToken) return;
+  activeTrack = first;
+  music.removeAttribute('src');
+  music.load();
+  $('elapsed').textContent = '0:00';
+  $('seek').value = 0;
+  setNotice('');
+  void loadLyrics(first);
+  if (speechUrl) {
+    introPhase = true;
+    renderNowPlaying();
+    renderQueue();
+    updateTransport();
+    await speakAndWait(speechUrl);
+    if (token !== segmentToken) return;
+    introPhase = false;
+  }
+  await playTrack(first, prepared);
+}
+async function playSet(tracks) {
+  cancelSegment();
+  if (await addTracks(tracks, 'replace')) await playTrack(state.queue[0]);
+}
+function outroKey() { return state.queue.map(track => track.id).join(','); }
+function requestOutro() {
+  const last = state.queue.at(-1);
+  const key = outroKey();
+  if (!last || chatBusy || outro?.key === key) return;
+  const entry = { key, spoken: false };
+  outro = entry;
+  entry.promise = post('/api/dj/outro', { lastTrackId: last.id }, { timeout: 190000 }).then(result => {
+    entry.result = result;
+    if (result.message && !state.messages.some(message => message.id === result.message.id)) {
+      state.messages.push(result.message);
+      renderMessages();
+    }
+    return result;
+  }).catch(() => null);
+}
+async function handleQueueEnd() {
+  queueFinished = true;
+  const token = segmentToken;
+  updateTransport();
+  renderQueue();
+  renderQuickReplies();
+  if (!state.queue.length) return;
+  requestOutro();
+  const entry = outro;
+  if (!entry) { setNotice('这一轮听完了。和 Bob 再聊聊，续上下一段音乐。'); return; }
+  setNotice('这一组听完了，Bob 正在想下一段…');
+  const result = await entry.promise;
+  if (token !== segmentToken || !queueFinished || outro !== entry) return;
+  if (!result) { setNotice('这一轮听完了。和 Bob 再聊聊，续上下一段音乐。'); return; }
+  renderQuickReplies();
+  setNotice(result.tracks?.length
+    ? 'Bob 准备了下一组：点「好，接着放」或回复「好」就开始，也可以直接告诉他想听什么。'
+    : '这一轮听完了。和 Bob 再聊聊，续上下一段音乐。');
+  const url = result.speech?.url || result.message?.speechUrl;
+  if (autoVoice && url && !entry.spoken) {
+    entry.spoken = true;
+    await speakAndWait(url);
+  }
 }
 async function playSpeech(url) {
   const source = safeUrl(url);
@@ -468,11 +687,11 @@ async function playSpeech(url) {
   const request = ++speechRequest;
   speech.pause();
   speech.src = source;
-  try { await speech.play(); }
+  try { await speech.play(); return request === speechRequest; }
   catch (error) {
-    if (request !== speechRequest) return;
-    if (error.name === 'NotAllowedError') toast('口播已生成，点击消息下方的“听 Bob 说”即可播放。');
-    else throw new Error('口播音频未能播放，请稍后重试。');
+    if (request !== speechRequest) return false;
+    if (error.name === 'NotAllowedError') { toast('口播已生成，点击消息下方的 REPLAY 即可播放。'); return false; }
+    throw new Error('口播音频未能播放，请稍后重试。');
   }
 }
 function updateSpeechState() {
@@ -483,21 +702,155 @@ function updateSpeechState() {
   updateTransport();
 }
 
+function coverUrl(url, size) {
+  const safe = safeUrl(url, true);
+  if (!safe || safe.startsWith('data:')) return safe;
+  // NetEase's image CDN resizes on request; other hosts ignore the parameter.
+  return /music\.126\.net\//.test(safe) && !safe.includes('?') ? `${safe}?param=${size}y${size}` : safe;
+}
+function stageVisible() {
+  return Boolean(activeTrack && (introPhase || loadingTrack || queueFinished || music.getAttribute('src')));
+}
+function renderStage() {
+  const visible = stageVisible();
+  $('clock-panel').classList.toggle('has-track', visible);
+  $('now-stage').hidden = !visible;
+  if (!visible) return;
+  const cover = coverUrl(activeTrack.cover, 440);
+  const image = $('now-cover-image');
+  if (cover && image.dataset.source !== cover) {
+    image.dataset.source = cover;
+    image.hidden = true;
+    image.onload = () => { if (image.dataset.source === cover) { image.hidden = false; $('now-cover').classList.add('has-image'); } };
+    image.onerror = () => { if (image.dataset.source === cover) { image.hidden = true; $('now-cover').classList.remove('has-image'); } };
+    $('now-cover').classList.remove('has-image');
+    image.src = cover;
+  } else if (!cover) {
+    image.dataset.source = '';
+    image.hidden = true;
+    image.removeAttribute('src');
+    $('now-cover').classList.remove('has-image');
+  }
+  $('now-cover').classList.toggle('playing', !music.paused && !music.ended);
+  renderLyrics();
+}
+async function loadLyrics(track) {
+  if (!track) return;
+  const id = track.id;
+  if (lyric.trackId === id && lyric.status !== 'error') return;
+  const cached = lyricCache.get(id);
+  lyric = cached ? { trackId: id, ...cached } : { trackId: id, status: 'loading', lines: [] };
+  renderLyrics();
+  if (cached) return;
+  let data;
+  try {
+    data = await api(`/api/music/lyric/${encodeURIComponent(id)}`, { timeout: 20000 });
+    if (!['synced', 'unsynced', 'instrumental', 'none'].includes(data.status) || !Array.isArray(data.lines)) throw new Error();
+    lyricCache.set(id, data);
+    if (lyricCache.size > 40) lyricCache.delete(lyricCache.keys().next().value);
+  } catch { data = { status: 'error', lines: [] }; }
+  if (lyric.trackId !== id) return;
+  lyric = { trackId: id, ...data };
+  renderLyrics();
+}
+function renderLyrics() {
+  if (!activeTrack) return;
+  const current = lyric.trackId === activeTrack.id ? lyric : { status: 'loading', lines: [] };
+  const showLines = !introPhase && ['synced', 'unsynced'].includes(current.status) && current.lines.length;
+  const key = `${activeTrack.id}|${showLines ? current.status : 'info'}|${introPhase}|${current.status}`;
+  $('lyrics').classList.toggle('unsynced', showLines && current.status === 'unsynced');
+  $('lyrics').classList.toggle('info-mode', !showLines);
+  if (key === renderedLyricKey) { if (showLines) syncLyrics(); return; }
+  renderedLyricKey = key;
+  lyricIndex = -2;
+  $('lyric-info').hidden = Boolean(showLines);
+  $('lyric-lines').hidden = !showLines;
+  if (!showLines) {
+    $('lyric-lines').replaceChildren();
+    $('info-title').textContent = activeTrack.title;
+    $('info-artist').textContent = [activeTrack.artist, activeTrack.album].filter(Boolean).join(' · ');
+    const hints = { loading: '正在找歌词…', instrumental: '纯音乐，没有歌词', none: '这首歌暂时没有歌词', error: '歌词暂时没取到' };
+    $('info-hint').textContent = introPhase ? 'Bob 正在介绍这首歌' : hints[current.status] || '';
+    return;
+  }
+  $('lyric-lines').replaceChildren(...current.lines.map(line => {
+    const item = node('li', 'lyric-line');
+    item.append(node('span', 'lyric-text', line.text));
+    if (line.translation) item.append(node('span', 'lyric-translation', line.translation));
+    return item;
+  }));
+  $('lyric-lines').style.transform = '';
+  $('lyrics').scrollTop = 0;
+  syncLyrics();
+}
+function syncLyrics(force = false) {
+  if (lyric.status !== 'synced' || lyric.trackId !== activeTrack?.id || $('lyric-lines').hidden) return;
+  const position = (music.currentTime || 0) * 1000 + previewStartMs + 250;
+  let index = -1;
+  for (let i = 0; i < lyric.lines.length && lyric.lines[i].time <= position; i += 1) index = i;
+  if (index === lyricIndex && !force) return;
+  lyricIndex = index;
+  const items = $('lyric-lines').children;
+  for (let i = 0; i < items.length; i += 1) {
+    items[i].classList.toggle('current', i === index);
+    items[i].classList.toggle('past', i < index);
+  }
+  // Keep the current line on the panel's optical centre; before the first line, show the opening lines.
+  const target = items[Math.max(0, index)];
+  if (!target) return;
+  const box = $('lyrics').clientHeight;
+  const offset = index < 0 ? 0 : Math.max(0, target.offsetTop + target.offsetHeight / 2 - box / 2);
+  $('lyric-lines').style.transform = `translateY(${-offset}px)`;
+}
+function renderQuickReplies() {
+  const container = $('quick-replies');
+  const awaiting = queueFinished && Boolean(outro?.result?.tracks?.length);
+  const options = awaiting ? ['好，接着放', '换点安静的', '来点更有劲的', '换个风格']
+    : state.queue.length ? ['再来几首类似的', '换点安静的', '来点更有劲的']
+      : ['适合专注工作的歌', '深夜放松一下', '来点老派摇滚'];
+  container.hidden = chatBusy;
+  const key = options.join('|');
+  if (container.dataset.key === key) return;
+  container.dataset.key = key;
+  container.replaceChildren(...options.map((text, index) => {
+    const button = node('button', `quick-reply${awaiting && index === 0 ? ' primary' : ''}`, text);
+    button.type = 'button';
+    button.addEventListener('click', () => {
+      if (chatBusy) return;
+      $('chat-input').value = text;
+      sendMessage();
+    });
+    return button;
+  }));
+}
+function renderProgress(steps) {
+  for (const item of $('thinking-steps').children) {
+    const value = steps[item.dataset.step] || 'pending';
+    item.hidden = value === 'skipped';
+    item.classList.toggle('active', value === 'active');
+    item.classList.toggle('done', value === 'done');
+  }
+}
+
 async function sendMessage(event) {
   event?.preventDefault();
   const content = $('chat-input').value.trim();
   if (!content || chatBusy) return;
   chatBusy = true;
-  const playbackRequest = musicRequest;
+  const playerState = currentPlayerState();
+  // A new request replaces Bob's end-of-set question; do not let it speak over the reply.
+  if (queueFinished) { cancelSegment(); speechRequest += 1; speech.pause(); }
   const voiceRequest = speechRequest;
   pendingUser = { id: `pending-${Date.now()}`, role: 'user', content, createdAt: new Date().toISOString(), previousIds: new Set(state.messages.map(message => message.id)) };
   $('chat-input').value = '';
   $('send').disabled = true;
+  renderProgress({ plan: 'active' });
   $('thinking').hidden = false;
+  renderQuickReplies();
   $('chat-form').setAttribute('aria-busy', 'true');
   renderMessages();
   try {
-    const result = await post('/api/chat', { message: content }, { timeout: 190000 });
+    const result = await post('/api/chat', { message: content, playerState }, { timeout: 190000 });
     if (Array.isArray(result.queue)) state.queue = normalizeTracks(result.queue);
     if (result.message && !state.messages.some(message => message.id === result.message.id)) state.messages.push(result.message);
     try { applyState(await api('/api/state', { timeout: 15000 })); }
@@ -513,14 +866,17 @@ async function sendMessage(event) {
       else if (result.control.action === 'previous') await moveTrack(-1);
       else if (result.control.action === 'pause') pausePlayback();
       else if (result.control.action === 'play' && music.paused) await togglePlayback();
+      else if (result.control.action === 'start-queue') { cancelSegment(); outro = null; await playTrack(state.queue[0]); }
     } else {
       const tracks = normalizeTracks(result.tracks);
-      if (tracks.length && music.paused && playbackRequest === musicRequest) await playTrack(tracks[0]);
-      if (autoVoice && voiceRequest === speechRequest && (result.speech?.url || result.message?.speechUrl)) {
-        try { await playSpeech(result.speech?.url || result.message.speechUrl); }
+      const speechUrl = autoVoice && voiceRequest === speechRequest ? result.speech?.url || result.message?.speechUrl : null;
+      if (result.speech?.error) toast(`歌曲和文字已准备好；口播暂未生成：${result.speech.error}`);
+      // Bob speaks first; the new set starts as soon as he finishes, replacing what was playing.
+      if (tracks.length) await startSegment(tracks, speechUrl);
+      else if (speechUrl) {
+        try { await playSpeech(speechUrl); }
         catch (error) { toast(error.message); }
       }
-      if (result.speech?.error) toast(`歌曲和文字已准备好；口播暂未生成：${result.speech.error}`);
     }
   } catch (error) {
     pendingUser = null;
@@ -531,6 +887,7 @@ async function sendMessage(event) {
     chatBusy = false;
     $('send').disabled = false;
     $('thinking').hidden = true;
+    renderQuickReplies();
     $('chat-form').removeAttribute('aria-busy');
     $('chat-input').focus({ preventScroll: true });
   }
@@ -650,6 +1007,7 @@ async function checkQr(key, generation) {
       await refreshStatus();
       if (authorizedGeneration !== qrGeneration || !$('login-dialog').open) return;
       if (services?.music?.loggedIn) {
+        void refreshFavorites();
         renderLoggedIn();
         toast('网易云已连接，可以开始听歌了。');
       } else {
@@ -681,6 +1039,7 @@ async function logout() {
     await post('/api/logout', {});
     if (services?.music) { services.music.loggedIn = false; delete services.music.nickname; }
     renderStatus();
+    void refreshFavorites();
     $('login-dialog').close();
     toast('已退出网易云账号。');
   } catch (error) { toast(error.message); }
@@ -700,6 +1059,10 @@ music.addEventListener('loadedmetadata', () => {
 });
 music.addEventListener('timeupdate', () => {
   $('elapsed').textContent = formatTime(music.currentTime);
+  syncLyrics();
+  // Let Bob prepare his wrap-up while the last song of the set is still playing.
+  if (activeTrack && state.queue.at(-1)?.id === activeTrack.id && Number.isFinite(music.duration)
+    && music.duration - music.currentTime <= OUTRO_LEAD_SECONDS && !music.paused) requestOutro();
   if (Number.isFinite(music.duration) && music.duration > 0) {
     const progress = (music.currentTime / music.duration) * 1000;
     $('seek').value = progress;
@@ -719,10 +1082,13 @@ $('play').addEventListener('click', togglePlayback);
 $('stop').addEventListener('click', () => { pausePlayback(); if (music.src) music.currentTime = 0; if (speech.src) speech.currentTime = 0; });
 $('favorite').addEventListener('click', toggleFavorite);
 $('hide-queue').addEventListener('click', () => setLibraryOpen(!libraryOpen));
-$('show-favorites').addEventListener('click', () => { showingFavorites = !showingFavorites; selectLibraryTab('queue'); });
+$('show-favorites').addEventListener('click', () => {
+  showingFavorites = !showingFavorites;
+  selectLibraryTab('queue');
+  if (showingFavorites && favoriteSource === 'netease' && remoteFavoritesState !== 'loading') void refreshFavorites();
+});
 $('theme-dark').addEventListener('click', () => setTheme('dark'));
 $('theme-light').addEventListener('click', () => setTheme('light'));
-$('mic').addEventListener('click', () => toast('语音输入暂未接入，请在输入框告诉 Bob 你想听什么。'));
 
 function createProfileDots(dialog) {
   const canvas = node('canvas', 'profile-dot-field');
@@ -926,12 +1292,12 @@ for (const button of document.querySelectorAll('.profile-open')) button.addEvent
 });
 $('previous').addEventListener('click', () => moveTrack(-1));
 $('next').addEventListener('click', () => moveTrack(1));
-$('seek').addEventListener('input', () => { if (Number.isFinite(music.duration)) music.currentTime = (Number($('seek').value) / 1000) * music.duration; });
+$('seek').addEventListener('input', () => { if (Number.isFinite(music.duration)) { music.currentTime = (Number($('seek').value) / 1000) * music.duration; syncLyrics(); } });
+new ResizeObserver(() => syncLyrics(true)).observe($('lyrics'));
 $('volume').addEventListener('input', () => { userVolume = Number($('volume').value); savePreference('radio-bob-volume', userVolume); updateMusicVolume(); });
 $('auto-voice').addEventListener('change', () => { autoVoice = $('auto-voice').checked; savePreference('radio-bob-auto-voice', autoVoice); if (!autoVoice) speech.pause(); });
 $('chat-form').addEventListener('submit', sendMessage);
 $('chat-input').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); } });
-document.querySelectorAll('[data-prompt]').forEach(button => button.addEventListener('click', () => { $('chat-input').value = button.dataset.prompt; $('chat-input').focus(); }));
 $('queue-tab').addEventListener('click', () => {
   showingFavorites = false;
   if (libraryOpen && !$('queue-panel').hidden) setLibraryOpen(false);
@@ -982,6 +1348,10 @@ async function start() {
     const events = new EventSource('/api/events');
     events.addEventListener('state', event => {
       try { applyState(JSON.parse(event.data)); } catch { /* Ignore malformed transient event. */ }
+    });
+    events.addEventListener('progress', event => {
+      if (!chatBusy) return;
+      try { renderProgress(JSON.parse(event.data)); } catch { /* Ignore malformed transient event. */ }
     });
     events.addEventListener('open', () => {
       document.body.classList.add('connected');

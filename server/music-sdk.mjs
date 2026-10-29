@@ -12,6 +12,11 @@ const modules = {
   '/login/qr/create': 'login_qr_create',
   '/login/qr/check': 'login_qr_check',
   '/login/status': 'login_status',
+  '/lyric': 'lyric',
+  '/likelist': 'likelist',
+  '/like': 'like',
+  '/user/playlist': 'user_playlist',
+  '/playlist/track/all': 'playlist_track_all',
 };
 
 /** Load only SDK functions, not main.js/server.js or its HTTP service/dotenv loader. */

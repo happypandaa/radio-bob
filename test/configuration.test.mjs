@@ -94,7 +94,8 @@ test('only two keys produce DeepSeek and Fish requests with the default models a
   assert.ok(!JSON.stringify(status).includes(env.ANTHROPIC_API_KEY));
   assert.ok(!JSON.stringify(status).includes(env.FISH_API_KEY));
   const response = await request('/api/chat', { message: '请为离线测试推荐歌曲。' });
-  assert.equal(response.message.content, plan.say + '\n\n有 1 首推荐暂时未能从曲库找到，你可以试试直接搜歌。');
+  assert.equal(response.message.content, plan.say);
+  assert.equal(response.message.note, '有 1 首推荐暂时没在曲库找到，可以试试直接搜歌。');
   assert.match(response.speech.url, /^\/tts\/[a-f0-9]{64}\.mp3$/);
   assert.equal(calls.length, 2);
 });

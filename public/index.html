@@ -18,11 +18,19 @@
       <div class="header-actions"><button class="login-button" id="account-button" type="button"><span id="account-label">LOGIN</span></button><div class="theme-switch" role="group" aria-label="外观主题"><button id="theme-dark" type="button" aria-pressed="true">DARK</button><button id="theme-light" type="button" aria-pressed="false">LIGHT</button></div></div>
     </header>
 
-    <section class="clock-panel" aria-label="电台时钟">
-      <time id="clock" class="pixel-clock" aria-label="当前时间"><span id="clock-hours">--</span><span class="clock-colon" aria-hidden="true">:</span><span id="clock-minutes">--</span></time>
-      <div id="weekday" class="weekday">&nbsp;</div>
-      <div id="calendar-date" class="calendar-date">&nbsp;</div>
-      <span class="air-status" id="air-status"><span class="status-dot"></span><span id="air-label">STANDBY</span></span>
+    <section class="clock-panel" id="clock-panel" aria-label="电台时钟与正在播放">
+      <div class="clock-block">
+        <time id="clock" class="pixel-clock" aria-label="当前时间"><span id="clock-hours">--</span><span class="clock-colon" aria-hidden="true">:</span><span id="clock-minutes">--</span></time>
+        <div class="clock-dates"><div id="weekday" class="weekday">&nbsp;</div><div id="calendar-date" class="calendar-date">&nbsp;</div></div>
+        <span class="air-status" id="air-status"><span class="status-dot"></span><span id="air-label">STANDBY</span></span>
+      </div>
+      <div class="now-stage" id="now-stage" hidden>
+        <div class="now-cover" id="now-cover"><img id="now-cover-image" alt="" hidden><svg class="icon" aria-hidden="true"><use href="/assets/icons.svg#i-music"/></svg></div>
+        <div class="lyrics" id="lyrics">
+          <ol class="lyric-lines" id="lyric-lines" aria-label="歌词"></ol>
+          <div class="lyric-info" id="lyric-info"><strong id="info-title"></strong><span id="info-artist"></span><small id="info-hint"></small></div>
+        </div>
+      </div>
     </section>
 
     <section class="player-panel" aria-label="音乐播放器">
@@ -53,9 +61,10 @@
           </div>
           <div id="messages" class="messages" role="log" aria-label="与 Bob 的对话" aria-live="polite" aria-relevant="additions text"><div id="chat-empty" class="chat-empty"><p>今天，想听点什么？</p><span>一种心情，一个场景，或一首喜欢的歌。</span></div></div>
         </div>
-        <div id="thinking" class="thinking" role="status" hidden><svg class="icon"><use href="/assets/icons.svg#i-sound"/></svg><span>Bob 正在为你准备音乐…</span></div>
+        <div id="thinking" class="thinking" role="status" hidden><svg class="icon"><use href="/assets/icons.svg#i-sound"/></svg><span class="thinking-steps" id="thinking-steps"><span class="thinking-step active" data-step="plan">Bob 在选歌</span><span class="thinking-step" data-step="match">去曲库找歌</span><span class="thinking-step" data-step="voice">录口播</span></span></div>
+        <div id="quick-replies" class="quick-replies" role="group" aria-label="快捷回复"></div>
       </div>
-      <form id="chat-form" class="chat-form"><label for="chat-input" class="sr-only">告诉 Bob 你想听什么</label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Say something to the DJ..."></textarea><button id="mic" class="round-button mic-button" type="button" aria-label="语音输入" aria-pressed="false"><svg class="icon"><use href="/assets/icons.svg#i-mic"/></svg></button><button id="send" class="round-button send-button" type="submit" aria-label="发送给 Bob"><svg class="icon"><use href="/assets/icons.svg#i-arrow"/></svg></button></form>
+      <form id="chat-form" class="chat-form"><label for="chat-input" class="sr-only">告诉 Bob 你想听什么</label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="Say something to the DJ..."></textarea><button id="send" class="round-button send-button" type="submit" aria-label="发送给 Bob"><svg class="icon"><use href="/assets/icons.svg#i-arrow"/></svg></button></form>
     </section>
     <footer class="station-footer"><span>RADIO BOB FM.</span><span id="connection-label">CONNECTING.</span></footer>
   </main>

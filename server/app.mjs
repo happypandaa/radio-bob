@@ -7,6 +7,7 @@ import { createMusicClient } from './music.mjs';
 import { createClaudeClient } from './claude.mjs';
 import { createTtsClientFromEnv } from './tts.mjs';
 import { controlIntent } from './router.mjs';
+import { bestMatch } from './match.mjs';
 import { createMusicSessionStore } from './music-session.mjs';
 
 export function createRadioApplication({ root, env = process.env, dataDir, profileDir, cacheDir = join(root, '.data', 'tts'), musicTransport, managed } = {}) {
@@ -28,7 +29,7 @@ const claude = createClaudeClient({
   baseUrl: env.ANTHROPIC_BASE_URL || 'https://api.deepseek.com/anthropic',
   model: env.CLAUDE_MODEL || env.ANTHROPIC_MODEL || 'deepseek-flash',
   effort: env.CLAUDE_API_EFFORT || env.CLAUDE_CODE_EFFORT_LEVEL,
-  maxTokens: env.CLAUDE_MAX_TOKENS ? Number(env.CLAUDE_MAX_TOKENS) : 8192,
+  maxTokens: env.CLAUDE_MAX_TOKENS ? Number(env.CLAUDE_MAX_TOKENS) : 16384,
   structuredOutput: structuredOutput === 'true' ? true : structuredOutput === 'false' ? false : structuredOutput,
 });
 const tts = createTtsClientFromEnv(env, cacheDir);
@@ -44,6 +45,40 @@ let statusAt = 0;
 let authRevision = 0;
 const pendingLogins = new Map();
 const QR_LIFETIME_MS = 5 * 60_000;
+// Bob's proposed next set when a queue ends; accepted by a short reply or PLAY ALL.
+let pendingNext = null;
+let lastOutroKey = '';
+let outroBusy = false;
+// Any explicit listener action supersedes an outro that is still being prepared.
+let listenerEpoch = 0;
+const queueKey = queue => queue.map(item => item.id).join(',');
+const OUTRO_REQUEST = '（这一组歌快播完了，听众暂时没有新的要求。）';
+
+async function findTrack(song) {
+  const hit = bestMatch(song, await music.search(`${song.title} ${song.artist}`, 8));
+  if (hit) return hit;
+  // A combined query can rank other versions first; the title alone often finds the original.
+  return bestMatch(song, await music.search(song.title, 10));
+}
+function planContext(message, extra = {}) {
+  return { message, taste: store.taste(), history: store.state().messages.slice(-12).map(({ role, content }) => ({ role, content })),
+    plays: store.recentPlays(), now: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }), ...extra };
+}
+async function produceSegment(context, exclude = new Set(), progress = () => {}) {
+  const steps = { plan: 'active', match: 'pending', voice: tts.configured ? 'pending' : 'skipped' };
+  const update = change => { Object.assign(steps, change); progress({ ...steps }); };
+  update({});
+  const plan = await claude.plan(context);
+  update({ plan: 'done', match: 'active', ...(tts.configured ? { voice: 'active' } : {}) });
+  const [found, speech] = await Promise.all([
+    Promise.allSettled(plan.play.map(findTrack)).finally(() => update({ match: 'done' })),
+    tts.configured ? tts.synthesize(plan.say).catch(error => ({ error: error.message })).finally(() => update({ voice: 'done' }))
+      : Promise.resolve({ error: `${tts.status.message} 当前使用文字串词。` })
+  ]);
+  const matched = found.filter(x => x.status === 'fulfilled' && x.value).map(x => x.value);
+  const tracks = [...new Map(matched.filter(track => !exclude.has(track.id)).map(track => [track.id, track])).values()];
+  return { plan, tracks, speech, missing: found.length - matched.length };
+}
 
 function invalidateLogin() {
   authRevision += 1;
@@ -84,6 +119,10 @@ function track(input) {
 }
 function broadcast() {
   const payload = `event: state\ndata: ${JSON.stringify(store.state())}\n\n`;
+  for (const res of clients) res.write(payload);
+}
+function broadcastProgress(steps) {
+  const payload = `event: progress\ndata: ${JSON.stringify(steps)}\n\n`;
   for (const res of clients) res.write(payload);
 }
 async function serviceStatus(refresh = false) {
@@ -166,6 +205,19 @@ async function handle(req, res) {
       const query = text(url.searchParams.get('q'), 160, '搜索关键词');
       return json(res, 200, { tracks: await music.search(query, 12) });
     }
+    const lyricId = path.match(/^\/api\/music\/lyric\/(\d+)$/);
+    if (lyricId && method === 'GET') return json(res, 200, await music.lyric(lyricId[1]));
+    if (path === '/api/favorites' && method === 'GET') {
+      // Signed-in listeners see their NetEase likes; otherwise the browser keeps favorites.
+      const favorites = musicSession.get() ? await music.favorites(100) : null;
+      return json(res, 200, favorites ? { source: 'netease', ...favorites } : { source: 'local' });
+    }
+    if (path === '/api/favorites' && method === 'POST') {
+      const data = await body(req);
+      if (!musicSession.get()) throw fail('请先连接网易云账号。', 401);
+      if (typeof data.like !== 'boolean') throw fail('收藏参数不正确。');
+      return json(res, 200, await music.like(track(data.track).id, data.like));
+    }
     const songId = path.match(/^\/api\/music\/url\/(\d+)$/);
     if (songId && method === 'GET') return json(res, 200, await music.resolve(songId[1]));
     if (path === '/api/queue' && method === 'POST') {
@@ -174,6 +226,8 @@ async function handle(req, res) {
       const existing = data.mode === 'append' ? store.get('queue', []) : [];
       const unique = new Map([...existing, ...data.tracks.map(track)].map(item => [item.id, item]));
       const queue = [...unique.values()].slice(0, 100);
+      if (data.mode === 'replace') { pendingNext = null; listenerEpoch += 1; }
+      lastOutroKey = '';
       store.set('queue', queue); broadcast(); return json(res, 200, { queue });
     }
     if (path === '/api/player' && method === 'POST') {
@@ -230,34 +284,60 @@ async function handle(req, res) {
       if (action) {
         const queue = store.get('queue', []);
         store.addMessage('user', message);
+        const idle = ['ended', 'idle'].includes(data.playerState);
+        if (pendingNext && (action === 'accept' || (action === 'play' && idle))) {
+          const next = pendingNext.tracks;
+          pendingNext = null;
+          lastOutroKey = '';
+          store.set('queue', next);
+          const response = store.addMessage('assistant', '好，那就接着放。');
+          broadcast();
+          return json(res, 200, { message: response, tracks: [], queue: next, control: { action: 'start-queue' } });
+        }
+        const effective = action === 'accept' ? 'play' : action;
         const descriptions = { play: '好的，继续播放。', pause: '好的，先暂停。', next: '好的，切到下一首。', previous: '好的，回到上一首。' };
-        const response = store.addMessage('assistant', queue.length ? descriptions[action] : '队列里还没有歌曲。先搜一首歌，或者告诉我你想听什么。');
+        const response = store.addMessage('assistant', queue.length ? descriptions[effective] : '队列里还没有歌曲。先搜一首歌，或者告诉我你想听什么。');
         broadcast();
-        return json(res, 200, { message: response, tracks: [], queue, ...(queue.length ? { control: { action } } : {}) });
+        return json(res, 200, { message: response, tracks: [], queue, ...(queue.length ? { control: { action: effective } } : {}) });
       }
       if (chatBusy) throw fail('DJ 正在准备上一段节目，请稍等。', 409);
       chatBusy = true;
       try {
-        const history = store.state().messages.slice(-12).map(({ role, content }) => ({ role, content }));
+        const context = planContext(message);
+        pendingNext = null;
+        listenerEpoch += 1;
         store.addMessage('user', message); broadcast();
-        const plan = await claude.plan({ message, taste: store.taste(), history, plays: store.recentPlays(), now: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }) });
-        const [found, speech] = await Promise.all([
-          Promise.allSettled(plan.play.map(async song => {
-            const matches = await music.search(`${song.title} ${song.artist}`, 5);
-            const normalize = value => value.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
-            return matches.find(item => normalize(item.title) === normalize(song.title) && normalize(item.artist).includes(normalize(song.artist))) || null;
-          })),
-          tts.configured ? tts.synthesize(plan.say).catch(error => ({ error: error.message }))
-            : Promise.resolve({ error: `${tts.status.message} 当前使用文字串词。` })
-        ]);
-        const tracks = [...new Map(found.filter(x => x.status === 'fulfilled' && x.value).map(x => [x.value.id, x.value])).values()];
-        const missing = found.filter(x => x.status === 'rejected' || !x.value).length;
-        const note = missing ? `\n\n有 ${missing} 首推荐暂时未能从曲库找到，你可以试试直接搜歌。` : '';
-        const response = store.addMessage('assistant', plan.say + note, tracks, speech.url || null);
-        if (tracks.length) store.set('queue', tracks);
+        const { plan, tracks, speech, missing } = await produceSegment(context, new Set(), broadcastProgress);
+        const note = missing ? `有 ${missing} 首推荐暂时没在曲库找到，可以试试直接搜歌。` : null;
+        const response = store.addMessage('assistant', plan.say, tracks, speech.url || null, note);
+        if (tracks.length) { store.set('queue', tracks); lastOutroKey = ''; }
         store.recordPlan(plan, tracks); broadcast();
         return json(res, 200, { message: response, tracks, speech, reason: plan.reason, queue: store.get('queue', []) });
       } finally { chatBusy = false; }
+    }
+    if (path === '/api/dj/outro' && method === 'POST') {
+      const data = await body(req);
+      const queue = store.get('queue', []);
+      const key = queueKey(queue);
+      if (!queue.length || String(data.lastTrackId) !== queue.at(-1).id) throw fail('队列已经变化，这一段不需要收尾。', 409);
+      if (key === lastOutroKey) throw fail('这一组歌的收尾已经准备好了。', 409);
+      if (chatBusy || outroBusy) throw fail('DJ 正在准备上一段节目，请稍等。', 409);
+      outroBusy = true;
+      lastOutroKey = key;
+      const epoch = listenerEpoch;
+      try {
+        const { plan, tracks, speech } = await produceSegment(
+          planContext(OUTRO_REQUEST, { segment: 'queue-ending', justPlayed: queue }), new Set(queue.map(item => item.id)));
+        // The listener may have started something else while Bob was thinking.
+        if (epoch !== listenerEpoch || queueKey(store.get('queue', [])) !== key) throw fail('队列已经变化，这一段不需要收尾。', 409);
+        const response = store.addMessage('assistant', plan.say, tracks, speech.url || null);
+        pendingNext = tracks.length ? { messageId: response.id, tracks } : null;
+        store.recordPlan(plan, tracks); broadcast();
+        return json(res, 200, { message: response, tracks, speech });
+      } catch (error) {
+        if (lastOutroKey === key && error.status !== 409) lastOutroKey = '';
+        throw error;
+      } finally { outroBusy = false; }
     }
     if (path.startsWith('/api/')) throw fail('接口不存在。', 404);
     const audio = path.match(/^\/tts\/([a-f0-9]{64})\.(mp3|wav)$/);

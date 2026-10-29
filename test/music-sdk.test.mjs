@@ -4,6 +4,7 @@ import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createSdkMusicTransport } from '../server/music-sdk.mjs';
 
 const require = createRequire(import.meta.url);
@@ -14,7 +15,7 @@ const response = { status: 200, body: { code: 200, data: [{ id: 123, url: 'https
 const artificialKey = { sk: 'artificial-key-not-for-network', version: '1' };
 
 async function fixture(t) {
-  const tempDir = realpathSync(await mkdtemp('/private/tmp/radio-sdk-key-offline-'));
+  const tempDir = realpathSync(await mkdtemp(join(tmpdir(), 'radio-sdk-key-offline-')));
   process.env.TMPDIR = process.env.TMP = process.env.TEMP = tempDir;
   process.env.DOTENV_CONFIG_QUIET = 'true';
   process.chdir(tempDir);

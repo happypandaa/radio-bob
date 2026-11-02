@@ -154,11 +154,39 @@ test('invalid, oversized, duplicate, and wrong-instance messages fail closed', a
   }
 });
 
-test('source/data overlap is rejected before opening any store', async t => {
-  const f = await fixture(t, { APP_DATA_DIR: source });
-  f.send({ type: 'initialize', token: f.token });
-  assert.deepEqual(await f.exit, { code: 1, signal: null });
-  assert.deepEqual(await readdir(f.temp), ['fake-source']);
+test('data directory inside the source project is accepted under the new contract', async t => {
+  // The platform injects APP_DATA_DIR as the project's data/ directory, which
+  // lives inside the source root. This must initialize normally instead of being
+  // rejected as a source/data overlap.
+  const f = await fixture(t);
+  const insideData = join(f.cwd, 'data');
+  const child = spawn(process.execPath, ['--import', guard, join(source, 'server/managed.mjs')], {
+    cwd: f.cwd,
+    env: { ...f.env, APP_DATA_DIR: insideData },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const messages = [];
+  let pending = '';
+  child.stdout.on('data', chunk => {
+    pending += chunk;
+    let newline;
+    while ((newline = pending.indexOf('\n')) >= 0) {
+      const line = pending.slice(0, newline); pending = pending.slice(newline + 1);
+      try { messages.push(JSON.parse(line)); } catch { messages.push({ invalid: line }); }
+    }
+  });
+  child.stderr.on('data', () => {});
+  const exit = new Promise(resolve => child.once('exit', resolve));
+  child.stdin.on('error', () => {});
+  child.stdin.write(`${JSON.stringify({ protocolVersion: 1, type: 'initialize', instanceId: f.instanceId, token: f.token })}\n`);
+  const ready = await eventually(() => messages.find(message => message.type === 'ready'));
+  assert.equal(ready.host, '127.0.0.1');
+  assert.ok(ready.port > 0);
+  const base = `http://${ready.host}:${ready.port}`;
+  const health = await (await fetch(base + '/_platform/health', { headers: { Authorization: `Bearer ${f.token}` } })).json();
+  assert.deepEqual(health, { protocolVersion: 1, instanceId: f.instanceId, status: 'ok' });
+  child.stdin.write(`${JSON.stringify({ protocolVersion: 1, type: 'shutdown', instanceId: f.instanceId })}\n`);
+  assert.deepEqual(await exit, 0);
 });
 
 test('SDK transport loads only functions in isolated cwd; local QR generation needs no service or network', async t => {

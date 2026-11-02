@@ -4,6 +4,7 @@
 !.env.example
 node_modules/
 .data/
+data/
 user/
 work/
 .DS_Store

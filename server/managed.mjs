@@ -22,10 +22,13 @@ function inside(parent, child) {
   const path = relative(parent, child);
   return !path || !path.startsWith(`..${sep}`) && path !== '..' && !isAbsolute(path);
 }
-async function checkedDirectory(input) {
+async function checkedDirectory(input, { allowInsideSource = false } = {}) {
   if (typeof input !== 'string' || !isAbsolute(input) || input.includes('\0')) throw new Error('Invalid managed directory');
   const path = resolve(input);
-  if (inside(root, path) || inside(path, root)) throw new Error('Managed directories must be separate from the source project');
+  // The platform injects APP_DATA_DIR as the project's data/ directory, which is
+  // intentionally inside the source root. Cache/temp stay in platform-private
+  // locations and must remain separate. Do not require data to be outside source.
+  if (!allowInsideSource && (inside(root, path) || inside(path, root))) throw new Error('Managed directories must be separate from the source project');
   let current = path;
   while (true) {
     const info = await lstat(current).catch(error => error.code === 'ENOENT' ? null : Promise.reject(error));
@@ -37,17 +40,24 @@ async function checkedDirectory(input) {
   return path;
 }
 function validMessage(message, keys) {
+  // Accept any extra keys the platform may add; only require the declared keys
+  // to be present with a protocolVersion of 1. Older strict key-set matching
+  // rejected initialize messages that carried additional fields.
   return message && typeof message === 'object' && !Array.isArray(message)
-    && message.protocolVersion === 1 && Object.keys(message).every(key => keys.includes(key));
+    && message.protocolVersion === 1 && keys.every(key => key in message);
 }
 function id(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value); }
 
 async function initialize(message) {
-  if (initialized || initializePromise || !validMessage(message, ['protocolVersion', 'type', 'instanceId', 'token'])
-    || !id(message.instanceId) || typeof message.token !== 'string' || !/^[\x21-\x7e]{32,512}$/.test(message.token)) throw new Error('Invalid initialization');
+  if (initialized || initializePromise) throw new Error('initialize received more than once');
+  if (!validMessage(message, ['protocolVersion', 'type', 'instanceId', 'token'])) throw new Error('initialize missing required fields or wrong protocolVersion');
+  if (!id(message.instanceId)) throw new Error('initialize instanceId invalid');
+  if (typeof message.token !== 'string') throw new Error('initialize token is not a string');
+  if (!/^[\x21-\x7e]{32,512}$/.test(message.token)) throw new Error('initialize token invalid (must be 32-512 visible ASCII bytes)');
   instanceId = message.instanceId;
   initializePromise = (async () => {
-    const directories = await Promise.all(['APP_DATA_DIR', 'APP_CACHE_DIR', 'APP_TEMP_DIR'].map(name => checkedDirectory(process.env[name])));
+    const directories = await Promise.all(['APP_DATA_DIR', 'APP_CACHE_DIR', 'APP_TEMP_DIR'].map((name, index) =>
+      checkedDirectory(process.env[name], { allowInsideSource: index === 0 })));
     for (let i = 0; i < directories.length; i++) for (let j = i + 1; j < directories.length; j++) {
       if (inside(directories[i], directories[j]) || inside(directories[j], directories[i])) throw new Error('Managed directories overlap');
     }
@@ -101,15 +111,16 @@ async function stop(code = 0, requestId) {
 async function dispatch(message) {
   if (stopping) return;
   if (message?.type === 'initialize') return initialize(message);
-  if (!initialized || message?.instanceId !== instanceId) throw new Error('Invalid instance');
+  if (!initialized) throw new Error('control message before initialize');
+  if (message?.instanceId !== instanceId) throw new Error('control message instanceId mismatch');
   if (message.type === 'ping' && validMessage(message, ['protocolVersion', 'type', 'instanceId', 'requestId']) && id(message.requestId)) {
     emit('pong', { requestId: message.requestId }); return;
   }
-  if (message.type === 'shutdown' && validMessage(message, ['protocolVersion', 'type', 'instanceId', 'requestId'])
+  if (message.type === 'shutdown' && validMessage(message, ['protocolVersion', 'type', 'instanceId'])
     && (message.requestId === undefined || id(message.requestId))) return stop(0, message.requestId);
-  throw new Error('Invalid control message');
+  throw new Error(`unsupported or malformed control message (type=${message?.type})`);
 }
-function invalid() { diagnostic('Invalid or oversized control message.'); void stop(1); }
+function invalid(reason) { diagnostic(`Invalid or oversized control message: ${reason}`); void stop(1); }
 process.stdin.on('data', chunk => {
   if (stopping) return;
   pending = Buffer.concat([pending, chunk]);
@@ -118,16 +129,17 @@ process.stdin.on('data', chunk => {
     if (newline < 0) break;
     const line = pending.subarray(0, newline);
     pending = pending.subarray(newline + 1);
-    if (!line.length || line.length > MAX_MESSAGE) return invalid();
+    if (!line.length) return invalid('empty line');
+    if (line.length > MAX_MESSAGE) return invalid(`line exceeds ${MAX_MESSAGE} bytes`);
     let message;
     try { message = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(line)); }
-    catch { return invalid(); }
-    queue = queue.then(() => dispatch(message)).catch(() => { invalid(); });
+    catch (error) { return invalid(`not valid JSON (${error.message})`); }
+    queue = queue.then(() => dispatch(message)).catch(error => { invalid(error.message || 'unknown dispatch error'); });
   }
-  if (pending.length > MAX_MESSAGE) invalid();
+  if (pending.length > MAX_MESSAGE) invalid(`pending buffer exceeds ${MAX_MESSAGE} bytes`);
 });
 process.stdin.on('end', () => {
-  if (pending.length) return invalid();
+  if (pending.length) return invalid('truncated final line');
   void queue.then(() => stop(initialized ? 0 : 1));
 });
 process.stdin.on('error', () => { diagnostic('Control channel failed.'); void stop(1); });

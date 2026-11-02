@@ -1,23 +1,20 @@
 {
-  "packageFormat": "local-web-app",
-  "formatVersion": 2,
-  "runtime": "node-service",
+  "manifestVersion": 1,
+  "runtime": "node",
   "app": {
-    "id": "dev.radio-bob.managed-trial",
     "name": "Radio Bob",
     "version": "0.1.0",
-    "description": "由平台管理 Node 后端的 AI 电台源码适配范例；配置规范可校验，尚未完成正式安装与完整分发包。"
+    "description": "本机运行的个人 AI 电台：用自然语言选歌，听 Bob 的中文串词，也可以直接搜歌、管理待播队列、保存音乐品味。"
   },
   "web": {
     "root": "public",
-    "entry": "index.html",
-    "routing": "files"
+    "entry": "index.html"
   },
   "backend": {
-    "protocolVersion": 1,
     "root": "server",
     "entry": "managed.mjs",
-    "nodeMajor": 24
+    "nodeMajor": 24,
+    "protocolVersion": 1
   },
   "configuration": {
     "version": 1,
@@ -28,12 +25,12 @@
         "type": "string",
         "required": true,
         "secret": true,
-        "description": "用于选歌和生成串词，必填。服务地址和模型已默认配置，密钥只交给后端。",
+        "description": "用于选歌和生成主持串词，必填。服务地址和模型已默认配置，密钥只交给后端。",
+        "placeholder": "粘贴你自己的 DeepSeek API 密钥",
         "howToGet": [
           "在下方 DeepSeek 页面创建自己的 API 密钥。",
           "确认账号有可用额度，复制密钥到此项。"
         ],
-        "placeholder": "粘贴你自己的 DeepSeek API 密钥",
         "helpUrl": "https://platform.deepseek.com/api_keys"
       },
       {
@@ -43,11 +40,11 @@
         "required": false,
         "secret": true,
         "description": "用于合成主持口播，使用默认模型和音色。留空时仍可使用文字串词和音乐。",
+        "placeholder": "填写自己的 Fish Audio API 密钥",
         "howToGet": [
           "在下方 Fish Audio 页面创建 API 密钥。",
           "确认账号有可用额度；不需要口播时留空。"
         ],
-        "placeholder": "填写自己的 Fish Audio API 密钥",
         "helpUrl": "https://fish.audio/app/api-keys/"
       }
     ]

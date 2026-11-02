@@ -67,9 +67,11 @@ async function initialize(message) {
       env: { ...process.env, NETEASE_API_BASE_URL: undefined }, musicTransport,
       managed: { instanceId, token: message.token } });
     if (stopping) return;
+    const listenHost = process.env.APP_HOST || '127.0.0.1';
+    const listenPort = Number.parseInt(process.env.APP_PORT ?? '0', 10) || 0;
     await new Promise((resolve, reject) => {
       application.server.once('error', reject);
-      application.server.listen(0, '127.0.0.1', resolve);
+      application.server.listen(listenPort, listenHost, resolve);
     });
     if (stopping) return;
     initialized = true;

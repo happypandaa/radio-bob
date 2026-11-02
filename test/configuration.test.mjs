@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRadioApplication } from '../server/app.mjs';
 
-const manifest = JSON.parse(await readFile(new URL('../local-app.json', import.meta.url), 'utf8'));
+const manifest = JSON.parse(await readFile(new URL('../panda.json', import.meta.url), 'utf8'));
 const fields = manifest.configuration.fields;
 const localFetch = globalThis.fetch;
 const plan = { say: '欢迎收听，先用一首轻松的歌陪你开始今天。', play: [{ title: '人工测试歌曲', artist: '人工测试歌手' }], reason: '离线测试。', segue: '' };
@@ -43,7 +43,7 @@ async function application(t, env) {
 }
 
 test('managed configuration requests only DeepSeek and Fish API keys without embedded secrets', () => {
-  assert.equal(manifest.runtime, 'node-service');
+  assert.equal(manifest.runtime, 'node');
   assert.deepEqual(fields.map(field => field.name).sort(), ['ANTHROPIC_API_KEY', 'FISH_API_KEY']);
   for (const field of fields) {
     assert.match(field.description, /[\u4e00-\u9fff]/);

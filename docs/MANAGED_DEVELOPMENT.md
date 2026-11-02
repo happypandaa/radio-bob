@@ -1,6 +1,6 @@
 # Radio Bob 受管入口开发说明
 
-`local-app.json` 使用 `formatVersion: 2 / runtime: node-service`。此仓库是 Radio 唯一的源码 Git；平台构建后安装独立运行副本，不给副本创建第二个 Git。
+`panda.json` 使用 `manifestVersion: 1 / runtime: node`。此仓库是 Radio 唯一的源码 Git；平台构建后安装独立运行副本，不给副本创建第二个 Git。
 
 ## 源码、构建与更新（2026-10-23）
 

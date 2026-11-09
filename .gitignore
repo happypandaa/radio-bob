@@ -1,7 +1,6 @@
 # Local credentials and environment overrides
 .env
 .env.*
-!.env.example
 node_modules/
 .data/
 data/
@@ -9,3 +8,10 @@ user/
 work/
 .DS_Store
 *.log
+
+.env*
+.test-artifacts/
+coverage/
+test-results/
+playwright-report/
+!.env.example

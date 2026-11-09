@@ -1,6 +1,5 @@
 {
-  "manifestVersion": 1,
-  "runtime": "node",
+  "manifestVersion": 2,
   "app": {
     "name": "Radio Bob",
     "version": "0.1.0",

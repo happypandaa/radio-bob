@@ -38,7 +38,7 @@
         "type": "string",
         "required": false,
         "secret": true,
-        "description": "用于合成主持口播，使用默认模型和音色。留空时仍可使用文字串词和音乐。",
+        "description": "用于以「沉静青年」音色合成主持口播。留空时仍可使用文字串词和音乐。",
         "placeholder": "填写自己的 Fish Audio API 密钥",
         "howToGet": [
           "在下方 Fish Audio 页面创建 API 密钥。",

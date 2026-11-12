@@ -5,6 +5,7 @@ import path from 'node:path';
 const LOCAL_FAILURE = Symbol('fish-failure');
 const MAX_AUDIO_BYTES = 20_000_000;
 const TIMEOUT_MS = 60_000;
+const DEFAULT_REFERENCE_ID = 'c420d0f2a92243ee8864f5e8a3de1d9e'; // 沉静青年
 
 const MODELS = new Set(['s1', 's2-pro', 's2.1-pro', 's2.1-pro-free', 'drama-3']);
 
@@ -14,7 +15,7 @@ function failure(message, code, status = 502) {
 
 function createFishProvider({ apiKey, model = 's2.1-pro-free', referenceId }) {
   apiKey = String(apiKey || '').trim();
-  const voice = String(referenceId || '').trim();
+  const voice = String(referenceId || '').trim() || DEFAULT_REFERENCE_ID;
   const configurationError = !apiKey ? '请先填写 Fish Audio 的 FISH_API_KEY；留空时只使用文字和音乐。'
     : !MODELS.has(model) ? 'FISH_MODEL 不是支持的型号，请使用 s2.1-pro-free 或官方已支持的型号。' : null;
   return {
@@ -49,7 +50,7 @@ function createFishProvider({ apiKey, model = 's2.1-pro-free', referenceId }) {
           response = await fetch('https://api.fish.audio/v1/tts', {
             method: 'POST', signal: controller.signal,
             headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json', model },
-            body: JSON.stringify({ text, format: 'mp3', ...(voice ? { reference_id: voice } : {}) }),
+            body: JSON.stringify({ text, format: 'mp3', reference_id: voice }),
           });
           checkActive();
           if (!response.ok) {

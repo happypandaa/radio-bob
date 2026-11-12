@@ -87,7 +87,7 @@ ANTHROPIC_API_KEY=你的DeepSeek密钥
 FISH_API_KEY=你的Fish密钥
 ```
 
-`ANTHROPIC_API_KEY` 是现有环境变量名，在本项目中填写 DeepSeek API Key。默认请求 `https://api.deepseek.com/anthropic`，模型为 `deepseek-flash`，开启思考，`max_tokens` 默认 16384，给思考内容留出余量，避免节目 JSON 被截断。Fish 使用 `s2.1-pro-free`，不指定音色 ID，由 Fish 提供默认音色。Fish 密钥可留空，仍能使用文字和音乐。密钥仅在 Node 后端使用，不填进浏览器页面。
+`ANTHROPIC_API_KEY` 是现有环境变量名，在本项目中填写 DeepSeek API Key。默认请求 `https://api.deepseek.com/anthropic`，模型为 `deepseek-flash`，开启思考，`max_tokens` 默认 16384，给思考内容留出余量，避免节目 JSON 被截断。Fish 默认使用 `s2.1-pro-free` 和「沉静青年」音色。Fish 密钥可留空，仍能使用文字和音乐。密钥仅在 Node 后端使用，不填进浏览器页面。
 
 运行端口仍默认为 `8080`，音乐接口为本机 `3000`。已有独立入口的高级环境变量兼容读取保留；如需采用上述默认值，可从旧 `.env` 移除自己曾填写的地址、模型和音色覆盖值。
 

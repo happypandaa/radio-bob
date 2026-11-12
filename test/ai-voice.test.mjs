@@ -303,7 +303,9 @@ test('Fish uses the explicit free model and caches/deduplicates identical audio 
     assert.equal(url, 'https://api.fish.audio/v1/tts');
     assert.equal(options.headers.model, 's2.1-pro-free');
     assert.equal(options.headers.Authorization, 'Bearer test-fish-key');
-    assert.deepEqual(JSON.parse(options.body), { text: '欢迎收听。', format: 'mp3' });
+    assert.deepEqual(JSON.parse(options.body), {
+      text: '欢迎收听。', format: 'mp3', reference_id: 'c420d0f2a92243ee8864f5e8a3de1d9e',
+    });
     return new Response(bytes, { headers: { 'content-type': 'audio/mpeg' } });
   });
   const client = createTtsClient({ apiKey: 'test-fish-key', cacheDir });

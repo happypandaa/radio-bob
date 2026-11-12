@@ -3,7 +3,8 @@
   "app": {
     "name": "Radio Bob",
     "version": "0.1.0",
-    "description": "本机运行的个人 AI 电台：用自然语言选歌，听 Bob 的中文串词，也可以直接搜歌、管理待播队列、保存音乐品味。"
+    "description": "本机运行的个人 AI 电台：用自然语言选歌，听 Bob 的中文串词，也可以直接搜歌、管理待播队列、保存音乐品味。",
+    "icon": "public/assets/app-icon-512.png"
   },
   "web": {
     "root": "public",

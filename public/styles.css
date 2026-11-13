@@ -68,7 +68,13 @@ body:not(.is-playing):not(.is-speaking):not(.is-busy) .aurora{opacity:.7}
 .display-prev,.display-next{font-size:clamp(15px,2.3dvh,19px);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .display-prev{color:rgba(255,255,255,.36)}
 .display-next{color:rgba(255,255,255,.3)}
-.display-now{font:800 clamp(24px,4.4dvh,34px)/1.3 var(--font);letter-spacing:-.3px;color:#fff;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+/* Always one line: a line too long for the display scrolls instead of wrapping. */
+.display-now{font:800 clamp(24px,4.4dvh,34px)/1.3 var(--font);letter-spacing:-.3px;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.display-now>span{display:inline-block;will-change:transform}
+.display-now.marquee{text-overflow:clip;-webkit-mask-image:linear-gradient(to right,#000 90%,transparent);mask-image:linear-gradient(to right,#000 90%,transparent)}
+.display-now.marquee>span{animation:marquee var(--marquee-time,8s) ease-in-out infinite alternate}
+@keyframes marquee{0%,15%{transform:translateX(0)}85%,100%{transform:translateX(var(--marquee-shift,0))}}
+@media(prefers-reduced-motion:reduce){.display-now>span{display:inline}.display-now.marquee{text-overflow:ellipsis;-webkit-mask-image:none;mask-image:none}}
 .display-sub{font-size:clamp(14px,2dvh,17px);line-height:1.5;color:rgba(255,255,255,.72);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .display.swap .display-now{animation:swap .45s cubic-bezier(.2,.7,.2,1)}
 @keyframes swap{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
@@ -90,6 +96,11 @@ body.is-speaking{--speed:.9s}
 .air-status.live .status-dot,.air-status.playing .status-dot{background:var(--live)}
 body:not(.connected) .air-status .status-dot{background:#c98a4b}
 .header-actions{display:flex;align-items:center;gap:6px;flex:none}
+.on-air-badge{display:flex;align-items:center;gap:7px;height:26px;padding:0 10px;margin-right:4px;border-radius:999px;border:1px solid rgba(255,255,255,.18);font:700 11px var(--mono);letter-spacing:1.4px;color:rgba(255,255,255,.5);transition:color .4s,border-color .4s,background-color .4s}
+.on-air-dot{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.35);transition:background-color .4s,box-shadow .4s}
+.on-air-badge.live{color:var(--live);border-color:rgba(74,222,155,.45);background:rgba(74,222,155,.08)}
+.on-air-badge.live .on-air-dot{background:var(--live);box-shadow:0 0 8px rgba(74,222,155,.8);animation:on-air-pulse 2.4s ease-in-out infinite}
+@keyframes on-air-pulse{50%{box-shadow:0 0 2px rgba(74,222,155,.4)}}
 .header-clock{font:400 13px var(--mono);color:#a3a3ad;margin-right:6px;font-variant-numeric:tabular-nums}
 .bar-button{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#c8c8cf}
 .bar-button:hover,.bar-button[aria-expanded=true]{background:rgba(255,255,255,.1);color:#fff}
@@ -226,11 +237,11 @@ body.is-playing .eq i{animation:eq 1s ease-in-out infinite}
 @media(max-height:600px){
  .display{min-height:0;padding-top:8px;gap:4px}
  .display-prev,.display-next{display:none}
- .display-now{-webkit-line-clamp:1}
  .now h1{-webkit-line-clamp:1}
 }
 @media(max-width:520px){
  .station-header{padding-inline:18px}
+ .on-air-badge{padding:0 8px;letter-spacing:1px}
  .station-id .dot-name{font-size:24px}
  .header-clock{display:none}
  .sheet{padding-inline:12px}

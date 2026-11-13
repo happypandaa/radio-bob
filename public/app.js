@@ -466,10 +466,10 @@ function setDisplay(label, prev, now, sub, next, mode) {
   const key = [label, prev, now, sub, next, mode].join('\u0001');
   if (key === displayKey) return;
   displayKey = key;
-  const changed = $('display-now').textContent !== now;
+  const changed = $('display-now-text').textContent !== now;
   $('display-label').textContent = label;
   $('display-prev').textContent = prev;
-  $('display-now').textContent = now;
+  $('display-now-text').textContent = now;
   $('display-sub').textContent = sub;
   $('display-next').textContent = next;
   $('display').dataset.mode = mode;
@@ -477,8 +477,22 @@ function setDisplay(label, prev, now, sub, next, mode) {
     $('display').classList.remove('swap');
     void $('display').offsetWidth;
     $('display').classList.add('swap');
+    fitDisplayLine();
   }
 }
+/** Measure the big line; if it does not fit, scroll it back and forth instead of wrapping. */
+function fitDisplayLine() {
+  const box = $('display-now');
+  const text = $('display-now-text');
+  box.classList.remove('marquee');
+  const overflow = text.offsetWidth - box.clientWidth;
+  if (overflow <= 4) return;
+  box.style.setProperty('--marquee-shift', `${-(overflow + 12)}px`);
+  box.style.setProperty('--marquee-time', `${Math.max(4, overflow / 40 + 3).toFixed(1)}s`);
+  box.classList.add('marquee');
+}
+new ResizeObserver(() => fitDisplayLine()).observe($('display'));
+document.fonts?.ready.then(fitDisplayLine);
 function renderDisplay() {
   const speaking = !speech.paused && !speech.ended;
   const speechLength = Number.isFinite(speech.duration) && speech.duration > 0 ? speech.duration : 0;
@@ -586,6 +600,9 @@ function renderAirStatus() {
   $('air-status').classList.toggle('live', speaking || chatBusy);
   $('air-status').classList.toggle('playing', playing);
   document.body.classList.toggle('is-busy', chatBusy);
+  const onAir = playing || speaking;
+  $('on-air-badge').classList.toggle('live', onAir);
+  $('on-air-text').textContent = onAir ? 'ON AIR' : 'STANDBY';
   renderDisplay();
 }
 function updateMusicVolume() {

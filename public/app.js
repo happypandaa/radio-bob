@@ -38,8 +38,6 @@ let remoteFavorites = [];
 let remoteLikedIds = new Set();
 let remoteFavoritesState = 'idle';
 let lyric = { trackId: null, status: 'idle', lines: [] };
-let renderedLyricKey = '';
-let lyricIndex = -2;
 let previewStartMs = 0;
 const lyricCache = new Map();
 
@@ -336,7 +334,6 @@ function renderQueue() {
   $('show-favorites').classList.toggle('active', showingFavorites);
 }
 const favoriteButton = $('favorite');
-const lyricsBox = $('lyrics');
 let historyOpen = false;
 let speakingMessageId = null;
 function splitSentences(text) {
@@ -361,23 +358,19 @@ function makeSetRow(track, index, tracks) {
   });
   return row;
 }
-/** The playing song gets its own surface, with the heart and the lyrics inside it. */
+/** The playing song is one highlighted line with the heart; its lyrics are on the display. */
 function makeActiveRow(track) {
-  const box = node('div', 'set-active');
-  const row = node('div', 'set-row');
+  const row = node('div', 'set-row set-active');
   const eq = node('span', 'eq');
   eq.setAttribute('aria-hidden', 'true');
   eq.append(node('i'), node('i'), node('i'));
   const line = node('span', 'row-line');
   line.append(node('span', 'row-title', track.title), node('span', 'row-meta', trackMeta(track)));
   row.append(eq, line, favoriteButton);
-  box.append(row, lyricsBox);
-  return box;
+  return row;
 }
 function parkActiveExtras() {
-  const holder = $('active-extras');
-  if (favoriteButton.parentElement !== holder) holder.append(favoriteButton);
-  if (lyricsBox.parentElement !== holder) holder.append(lyricsBox);
+  if (favoriteButton.parentElement !== $('active-extras')) $('active-extras').append(favoriteButton);
 }
 function makeBobMessage(message, old) {
   const article = node('article', `msg-bob${old ? ' old' : ''}`);
@@ -463,30 +456,71 @@ function renderMessages() {
     set.append(makeActiveRow(activeTrack));
     container.append(set);
   }
-  syncKaraoke();
-  if (activeId) requestAnimationFrame(() => syncLyrics(true));
+  renderDisplay();
   if (wasNearBottom || pendingUser) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
 }
-/** Sentence-level karaoke: Fish Audio gives no word timings, so time is shared out by length. */
-function syncKaraoke() {
-  const speaking = Boolean(speakingMessageId) && !speech.paused && !speech.ended;
-  for (const element of document.querySelectorAll('.bob-text.karaoke')) {
-    if (!speaking || element.parentElement.dataset.id !== speakingMessageId) element.classList.remove('karaoke');
+// The on-air display: what Bob is saying right now, otherwise the current lyric.
+// Fish Audio gives no word timings, so speech time is shared out by clause length.
+let displayKey = '';
+function setDisplay(label, prev, now, sub, next, mode) {
+  const key = [label, prev, now, sub, next, mode].join('\u0001');
+  if (key === displayKey) return;
+  displayKey = key;
+  const changed = $('display-now').textContent !== now;
+  $('display-label').textContent = label;
+  $('display-prev').textContent = prev;
+  $('display-now').textContent = now;
+  $('display-sub').textContent = sub;
+  $('display-next').textContent = next;
+  $('display').dataset.mode = mode;
+  if (changed) {
+    $('display').classList.remove('swap');
+    void $('display').offsetWidth;
+    $('display').classList.add('swap');
   }
-  if (!speaking) return;
-  const text = [...document.querySelectorAll('.msg-bob')].find(item => item.dataset.id === speakingMessageId)?.querySelector('.bob-text');
-  if (!text) return;
-  text.classList.add('karaoke');
-  const parts = [...text.children];
-  const total = parts.reduce((sum, part) => sum + part.textContent.length, 0) || 1;
-  const fraction = Number.isFinite(speech.duration) && speech.duration > 0 ? speech.currentTime / speech.duration : 0;
-  let reached = 0;
-  let index = parts.length - 1;
-  for (let i = 0; i < parts.length; i += 1) {
-    reached += parts[i].textContent.length;
-    if (reached / total > fraction) { index = i; break; }
+}
+function renderDisplay() {
+  const speaking = !speech.paused && !speech.ended;
+  const speechLength = Number.isFinite(speech.duration) && speech.duration > 0 ? speech.duration : 0;
+  $('strip-label').textContent = speaking && speechLength ? `${formatTime(speech.currentTime)} / ${formatTime(speechLength)}` : '';
+  const message = speaking && speakingMessageId ? state.messages.find(item => item.id === speakingMessageId) : null;
+  if (message?.content) {
+    const parts = splitSentences(message.content).map(part => part.trim()).filter(Boolean);
+    const total = parts.reduce((sum, part) => sum + part.length, 0) || 1;
+    const fraction = speechLength ? speech.currentTime / speechLength : 0;
+    let reached = 0;
+    let index = parts.length - 1;
+    for (let i = 0; i < parts.length; i += 1) {
+      reached += parts[i].length;
+      if (reached / total > fraction) { index = i; break; }
+    }
+    setDisplay('BOB · ON AIR', parts[index - 1] || '', parts[index] || '', '', parts[index + 1] || '', 'speech');
+    return;
   }
-  parts.forEach((part, i) => { part.classList.toggle('said', i < index); part.classList.toggle('now', i === index); });
+  if (speaking) { setDisplay('BOB · ON AIR', '', 'Bob 正在说…', '', '', 'speech'); return; }
+  const playing = !music.paused && !music.ended;
+  if (chatBusy && !playing) {
+    setDisplay('BOB · 选歌中', '', 'Bob 在挑歌…', pendingUser?.content ? `「${pendingUser.content}」` : '', '', 'busy');
+    return;
+  }
+  if (activeTrack && stageVisible()) {
+    const meta = trackMeta(activeTrack);
+    if (introPhase) { setDisplay('UP NEXT', '', activeTrack.title, meta, '', 'track'); return; }
+    const current = lyric.trackId === activeTrack.id ? lyric : { status: 'loading', lines: [] };
+    if (current.status === 'synced' && current.lines.length) {
+      const position = (music.currentTime || 0) * 1000 + previewStartMs + 250;
+      let index = -1;
+      for (let i = 0; i < current.lines.length && current.lines[i].time <= position; i += 1) index = i;
+      if (index < 0) { setDisplay('LYRICS', '', activeTrack.title, meta, current.lines[0].text || '', 'lyrics'); return; }
+      const line = current.lines[index];
+      setDisplay('LYRICS', current.lines[index - 1]?.text || '', line.text || '♪', line.translation || '', current.lines[index + 1]?.text || '', 'lyrics');
+      return;
+    }
+    const hints = { loading: '正在找歌词', unsynced: '歌词没有时间轴', instrumental: '纯音乐', none: '暂无歌词', error: '歌词暂时没取到' };
+    setDisplay(hints[current.status] ? `NOW PLAYING · ${hints[current.status]}` : 'NOW PLAYING', '', activeTrack.title, meta, '', 'track');
+    return;
+  }
+  setDisplay('RADIO BOB', '', '今天想听点什么？', '一种心情，一个场景，或一首喜欢的歌。', '', 'idle');
 }
 
 async function addTracks(tracks, mode = 'append') {
@@ -534,7 +568,6 @@ function updateTransport() {
   renderAirStatus();
   $('profile-air').textContent = playing || speaking ? 'LIVE' : 'IDLE';
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : activeTrack ? 'paused' : 'none';
-  setBarsMode(speaking ? 'speech' : playing ? 'music' : 'idle');
   renderStage();
 }
 let eventsStarted = false;
@@ -552,6 +585,8 @@ function renderAirStatus() {
               : activeTrack && music.getAttribute('src') ? '已暂停' : '待机';
   $('air-status').classList.toggle('live', speaking || chatBusy);
   $('air-status').classList.toggle('playing', playing);
+  document.body.classList.toggle('is-busy', chatBusy);
+  renderDisplay();
 }
 function updateMusicVolume() {
   if (fading) return;
@@ -789,7 +824,6 @@ function updateSpeechState() {
   $('voice-label').textContent = playing ? 'Bob 正在说话…' : voiceLabel();
   updateMusicVolume();
   updateTransport();
-  syncKaraoke();
 }
 
 function coverUrl(url, size) {
@@ -803,7 +837,7 @@ function stageVisible() {
 }
 function renderStage() {
   renderMessages();
-  if (stageVisible()) renderLyrics();
+  renderDisplay();
 }
 async function loadLyrics(track) {
   if (!track) return;
@@ -824,55 +858,8 @@ async function loadLyrics(track) {
   lyric = { trackId: id, ...data };
   renderLyrics();
 }
-function renderLyrics() {
-  if (!activeTrack) return;
-  const current = lyric.trackId === activeTrack.id ? lyric : { status: 'loading', lines: [] };
-  const showLines = !introPhase && ['synced', 'unsynced'].includes(current.status) && current.lines.length;
-  const key = `${activeTrack.id}|${showLines ? current.status : 'info'}|${introPhase}|${current.status}`;
-  $('lyrics').classList.toggle('unsynced', showLines && current.status === 'unsynced');
-  $('lyrics').classList.toggle('info-mode', !showLines);
-  if (key === renderedLyricKey) { if (showLines) syncLyrics(); return; }
-  renderedLyricKey = key;
-  lyricIndex = -2;
-  $('lyric-info').hidden = Boolean(showLines);
-  $('lyric-lines').hidden = !showLines;
-  if (!showLines) {
-    $('lyric-lines').replaceChildren();
-    $('info-title').textContent = activeTrack.title;
-    $('info-artist').textContent = [activeTrack.artist, activeTrack.album].filter(Boolean).join(' · ');
-    const hints = { loading: '正在找歌词…', instrumental: '纯音乐，没有歌词', none: '这首歌暂时没有歌词', error: '歌词暂时没取到' };
-    $('info-hint').textContent = introPhase ? 'Bob 正在介绍这首歌' : hints[current.status] || '';
-    return;
-  }
-  $('lyric-lines').replaceChildren(...current.lines.map(line => {
-    const item = node('li', 'lyric-line');
-    item.append(node('span', 'lyric-text', line.text));
-    if (line.translation) item.append(node('span', 'lyric-translation', line.translation));
-    return item;
-  }));
-  $('lyric-lines').style.transform = '';
-  $('lyrics').scrollTop = 0;
-  syncLyrics();
-}
-function syncLyrics(force = false) {
-  if (lyric.status !== 'synced' || lyric.trackId !== activeTrack?.id || $('lyric-lines').hidden) return;
-  const position = (music.currentTime || 0) * 1000 + previewStartMs + 250;
-  let index = -1;
-  for (let i = 0; i < lyric.lines.length && lyric.lines[i].time <= position; i += 1) index = i;
-  if (index === lyricIndex && !force) return;
-  lyricIndex = index;
-  const items = $('lyric-lines').children;
-  for (let i = 0; i < items.length; i += 1) {
-    items[i].classList.toggle('current', i === index);
-    items[i].classList.toggle('past', i < index);
-  }
-  // Keep the current line on the panel's optical centre; before the first line, show the opening lines.
-  const target = items[Math.max(0, index)];
-  if (!target) return;
-  const box = $('lyrics').clientHeight;
-  const offset = index < 0 ? 0 : Math.max(0, target.offsetTop + target.offsetHeight / 2 - box / 2);
-  $('lyric-lines').style.transform = `translateY(${-offset}px)`;
-}
+function renderLyrics() { renderDisplay(); }
+function syncLyrics() { renderDisplay(); }
 function renderQuickReplies() {
   const container = $('quick-replies');
   const awaiting = queueFinished && Boolean(outro?.result?.tracks?.length);
@@ -1151,7 +1138,7 @@ music.addEventListener('error', () => {
   updateTransport();
 });
 for (const event of ['play', 'pause', 'ended']) speech.addEventListener(event, updateSpeechState);
-speech.addEventListener('timeupdate', syncKaraoke);
+speech.addEventListener('timeupdate', renderDisplay);
 speech.addEventListener('error', () => { speech.pause(); updateSpeechState(); if (speech.getAttribute('src')) toast('口播音频加载失败，可以点击“听 Bob 说”重试。'); });
 $('play').addEventListener('click', togglePlayback);
 $('favorite').addEventListener('click', toggleFavorite);
@@ -1372,7 +1359,6 @@ for (const button of document.querySelectorAll('.profile-open')) button.addEvent
 });
 $('next').addEventListener('click', () => moveTrack(1));
 $('seek').addEventListener('input', () => { if (Number.isFinite(music.duration)) { music.currentTime = (Number($('seek').value) / 1000) * music.duration; syncLyrics(); } });
-new ResizeObserver(() => syncLyrics(true)).observe($('lyrics'));
 $('auto-voice').addEventListener('change', () => { autoVoice = $('auto-voice').checked; savePreference('radio-bob-auto-voice', autoVoice); if (!autoVoice) speech.pause(); });
 $('chat-form').addEventListener('submit', sendMessage);
 $('chat-input').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); } });
@@ -1407,107 +1393,13 @@ if ('mediaSession' in navigator) {
   ]) { try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Optional platform control. */ } }
 }
 
-// On-air bars. Bob's voice is served by our own server, so while he talks the bars
-// are his real loudness, scrolling like tape. Songs stream from NetEase and are
-// still drawn from a pattern that follows the music state.
-const barsCanvas = $('bars');
-let audioContext = null;
-let voiceAnalyser = null;
-let voiceSamples = null;
-let voiceHistory = [];
-// Routing the speech element through Web Audio is only safe once the context runs,
-// otherwise Bob would go silent; so it is wired up on the listener's first gesture.
-function ensureVoiceAnalyser() {
-  if (!voiceAnalyser && window.AudioContext) {
-    try {
-      audioContext = new AudioContext();
-      const source = audioContext.createMediaElementSource(speech);
-      voiceAnalyser = audioContext.createAnalyser();
-      voiceAnalyser.fftSize = 1024;
-      voiceAnalyser.smoothingTimeConstant = 0;
-      source.connect(voiceAnalyser);
-      voiceAnalyser.connect(audioContext.destination);
-      voiceSamples = new Uint8Array(voiceAnalyser.fftSize);
-    } catch { voiceAnalyser = null; }
-  }
-  if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
-}
-for (const type of ['pointerdown', 'keydown']) window.addEventListener(type, ensureVoiceAnalyser, { capture: true });
-speech.addEventListener('play', () => { if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {}); });
-function voiceLevel() {
-  voiceAnalyser.getByteTimeDomainData(voiceSamples);
-  let sum = 0;
-  for (const value of voiceSamples) { const x = (value - 128) / 128; sum += x * x; }
-  return Math.min(1, Math.pow(Math.sqrt(sum / voiceSamples.length) * 4.2, 0.75));
-}
-const barsContext = barsCanvas.getContext('2d');
-const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
-const SHEET_OVERLAP = 40;
-let barsMode = 'idle';
-let barsFrame = 0;
-let barsTick = 0;
-let barHeights = [];
-let barTargets = [];
-function setBarsMode(mode) {
-  barsMode = mode;
-  if (!barsFrame) barsFrame = requestAnimationFrame(drawBars);
-}
-function resizeBars() {
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
-  barsCanvas.width = Math.round(barsCanvas.clientWidth * ratio);
-  barsCanvas.height = Math.round(barsCanvas.clientHeight * ratio);
-  barsContext?.setTransform(ratio, 0, 0, ratio, 0, 0);
-  if (!barsFrame) barsFrame = requestAnimationFrame(drawBars);
-}
-// The stand-in shape is deliberately plain: a slow, smooth swell, no jitter.
-function barTarget(i, count, t) {
-  if (barsMode === 'idle') return 0.03;
-  const x = i / Math.max(1, count - 1);
-  const speed = barsMode === 'speech' ? 1.6 : 0.6;
-  const wave = 0.5 + 0.3 * Math.sin(x * 9 + t * speed) + 0.2 * Math.sin(x * 4 - t * speed * 0.6);
-  return 0.12 + 0.4 * wave * (0.75 + 0.25 * Math.sin(x * Math.PI));
-}
-function drawBars(now) {
-  barsFrame = 0;
-  const width = barsCanvas.clientWidth;
-  const height = barsCanvas.clientHeight;
-  if (!barsContext || !width || !height) return;
-  const step = 7;
-  const barWidth = 3;
-  const count = Math.max(8, Math.floor((width - 24) / step));
-  const left = (width - (count * step - (step - barWidth))) / 2;
-  const usable = Math.max(10, height - SHEET_OVERLAP - 6);
-  if (barHeights.length !== count) { barHeights = Array(count).fill(0.03); barTargets = Array(count).fill(0.03); }
-  const still = reducedMotion.matches || document.hidden;
-  const live = barsMode === 'speech' && voiceAnalyser && audioContext?.state === 'running';
-  if (live && !still) {
-    if (now - barsTick > 55) {
-      barsTick = now;
-      voiceHistory.push(voiceLevel());
-      if (voiceHistory.length > count) voiceHistory.splice(0, voiceHistory.length - count);
-      const pad = count - voiceHistory.length;
-      for (let i = 0; i < count; i += 1) barTargets[i] = Math.max(0.03, i < pad ? 0.03 : voiceHistory[i - pad]);
-    }
-  } else {
-    if (barsMode !== 'speech') voiceHistory = [];
-    for (let i = 0; i < count; i += 1) {
-      barTargets[i] = still && barsMode !== 'idle' ? 0.2 + 0.5 * Math.abs(Math.sin(i / 7)) : barTarget(i, count, now / 1000);
-    }
-  }
-  let moving = false;
-  barsContext.clearRect(0, 0, width, height);
-  barsContext.fillStyle = '#f2f2f4';
-  for (let i = 0; i < count; i += 1) {
-    const delta = barTargets[i] - barHeights[i];
-    barHeights[i] += still ? delta : delta * (live ? 0.5 : 0.12);
-    if (Math.abs(delta) > 0.002) moving = true;
-    const visible = Math.max(3, barHeights[i] * usable);
-    barsContext.fillRect(left + i * step, height - SHEET_OVERLAP - visible, barWidth, visible + SHEET_OVERLAP);
-  }
-  if (!still && (barsMode !== 'idle' || moving)) barsFrame = requestAnimationFrame(drawBars);
-}
-new ResizeObserver(resizeBars).observe(barsCanvas);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !barsFrame) barsFrame = requestAnimationFrame(drawBars); });
+// The low strip under the display: forty short bars, animated by CSS only while on air.
+$('mini-bars').append(...Array.from({ length: 40 }, (_, i) => {
+  const bar = node('i');
+  bar.style.setProperty('--h', `${5 + Math.round(9 * Math.abs(Math.sin(i * 0.9 + 0.4)) * (0.6 + 0.4 * Math.abs(Math.sin(i * 0.23))))}px`);
+  bar.style.setProperty('--d', `${-((i * 0.37) % 1.8).toFixed(2)}s`);
+  return bar;
+}));
 
 async function start() {
   applyTheme();

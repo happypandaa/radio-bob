@@ -14,8 +14,8 @@
 <body>
   <main class="radio-shell">
     <section class="on-air" aria-label="Radio Bob">
-      <div class="glow glow-a" aria-hidden="true"></div>
-      <div class="glow glow-b" aria-hidden="true"></div>
+      <div class="aurora" aria-hidden="true"><i class="blob blob-a"></i><i class="blob blob-b"></i><i class="blob blob-c"></i></div>
+      <div class="leds" aria-hidden="true"></div>
       <header class="station-header">
         <button class="station-brand profile-open" type="button" aria-label="关于 Radio Bob"><img class="brand-avatar" src="/assets/bob-pixel-avatar.png" alt=""></button>
         <div class="station-id">
@@ -29,7 +29,14 @@
           <button class="login-button account-open" id="account-button" type="button"><span id="account-label">LOGIN</span></button>
         </div>
       </header>
-      <canvas id="bars" class="bars" aria-hidden="true"></canvas>
+      <div class="display" id="display" data-mode="idle">
+        <div class="display-label" id="display-label">RADIO BOB</div>
+        <p class="display-prev" id="display-prev"></p>
+        <p class="display-now" id="display-now">今天想听点什么？</p>
+        <p class="display-sub" id="display-sub">一种心情，一个场景，或一首喜欢的歌。</p>
+        <p class="display-next" id="display-next"></p>
+      </div>
+      <div class="strip" aria-hidden="true"><span class="mini-bars" id="mini-bars"></span><span class="strip-label" id="strip-label"></span></div>
     </section>
 
     <section class="sheet">
@@ -72,10 +79,6 @@
   <!-- Moved into the playing track's row by renderMessages; parked here otherwise. -->
   <div id="active-extras" hidden>
     <button id="favorite" class="ghost-button favorite-button" type="button" aria-label="收藏当前歌曲" aria-pressed="false"><svg class="icon"><use href="/assets/icons.svg#i-heart"/></svg></button>
-    <div class="lyrics" id="lyrics">
-      <ol class="lyric-lines" id="lyric-lines" aria-label="歌词"></ol>
-      <div class="lyric-info" id="lyric-info"><strong id="info-title"></strong><span id="info-artist"></span><small id="info-hint"></small></div>
-    </div>
   </div>
 
   <dialog id="profile-dialog" class="modal profile-modal" aria-labelledby="profile-heading">

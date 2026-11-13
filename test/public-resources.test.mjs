@@ -8,7 +8,7 @@ import { createRadioApplication } from '../server/app.mjs';
 
 const source = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-test('shipped pages, chat avatar, fonts, textures and icon symbols are served from existing public resources', async t => {
+test('shipped pages, avatar, fonts, textures and icon symbols are served from existing public resources', async t => {
   const temp = await mkdtemp(join(tmpdir(), 'radio-public-disposable-'));
   const app = createRadioApplication({ root: source, env: {},
     dataDir: join(temp, 'data'), profileDir: join(temp, 'profile'), cacheDir: join(temp, 'cache') });
@@ -36,7 +36,6 @@ test('shipped pages, chat avatar, fonts, textures and icon symbols are served fr
   assert.equal(pixels.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
   assert.ok(pixels.readUInt32BE(16) > 100 && pixels.readUInt32BE(20) > 100);
   assert.ok(documents[0].includes('/assets/bob-pixel-avatar.png'), 'brand and profile avatar');
-  assert.ok(documents[1].includes('/assets/bob-pixel-avatar.png'), 'dynamic chat avatar');
   const symbols = await readFile(join(source, 'public/assets/icons.svg'), 'utf8');
   for (const match of documents.join('\n').matchAll(/\/assets\/icons\.svg#(i-[a-z-]+)/g)) {
     assert.ok(symbols.includes(`id="${match[1]}"`), match[1]);

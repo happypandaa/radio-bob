@@ -130,17 +130,21 @@ function updateClock() {
   $('clock-hours').textContent = String(now.getHours()).padStart(2, '0');
   $('clock-minutes').textContent = String(now.getMinutes()).padStart(2, '0');
   $('clock').setAttribute('aria-label', now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
-  $('weekday').textContent = now.toLocaleDateString('en-US', { weekday: 'long' });
-  $('calendar-date').textContent = now.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase().replaceAll(' ', '·');
 }
 
-function setTheme(theme) {
-  theme = theme === 'light' ? 'light' : 'dark';
+// Follows the system until the listener picks a side with the moon/sun button.
+const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
+function applyTheme() {
+  const saved = readPreference('radio-bob-theme-v2', '');
+  const theme = saved === 'light' || saved === 'dark' ? saved : systemDark.matches ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
-  savePreference('radio-bob-theme', theme);
-  for (const value of ['dark', 'light']) $(`theme-${value}`).setAttribute('aria-pressed', String(theme === value));
-  document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#050507' : '#f3f3f3';
+  $('theme-toggle').setAttribute('aria-label', theme === 'dark' ? '切换到日间模式' : '切换到夜间模式');
 }
+function toggleTheme() {
+  savePreference('radio-bob-theme-v2', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+  applyTheme();
+}
+systemDark.addEventListener('change', applyTheme);
 
 function setLibraryOpen(open) {
   const scroll = $('conversation-scroll');
@@ -148,9 +152,8 @@ function setLibraryOpen(open) {
   const wasOpen = libraryOpen;
   libraryOpen = open;
   $('library-body').hidden = !open;
-  $('hide-queue').textContent = open ? 'HIDE' : 'SHOW';
-  $('hide-queue').setAttribute('aria-expanded', String(open));
-  $('queue-tab').setAttribute('aria-expanded', String(open));
+  $('stream-body').hidden = open;
+  $('library-button').setAttribute('aria-expanded', String(open));
   if (open || wasOpen) scroll.scrollTo({ top: open ? 0 : chatScrollBeforeLibrary, behavior: 'instant' });
 }
 
@@ -177,7 +180,7 @@ async function toggleFavorite() {
       await post('/api/favorites', { track, like: !exists });
       if (exists) { remoteLikedIds.delete(track.id); remoteFavorites = remoteFavorites.filter(item => item.id !== track.id); }
       else { remoteLikedIds.add(track.id); remoteFavorites = [track, ...remoteFavorites.filter(item => item.id !== track.id)]; }
-      toast(exists ? '已从网易云「我喜欢的音乐」移除。' : '已加到网易云「我喜欢的音乐」，点击 FAV 查看。');
+      toast(exists ? '已从网易云「我喜欢的音乐」移除。' : '已加到网易云「我喜欢的音乐」，曲库的「收藏」里能看到。');
     } catch (error) { toast(error.message); }
     finally { renderFavorite(); if (showingFavorites) renderQueue(); }
     return;
@@ -186,7 +189,7 @@ async function toggleFavorite() {
   savePreference('radio-bob-favorites', JSON.stringify(favorites));
   renderFavorite();
   if (showingFavorites) renderQueue();
-  toast(exists ? '已从收藏中移除。' : '已收藏，点击 FAV 查看。');
+  toast(exists ? '已从收藏中移除。' : '已收藏，曲库的「收藏」里能看到。');
 }
 async function refreshFavorites() {
   const signedIn = Boolean(services?.music?.loggedIn);
@@ -318,12 +321,13 @@ function makeTrackRow(track, index, mode = 'queue') {
 function renderQueue() {
   const remote = favoriteSource === 'netease';
   const tracks = showingFavorites ? (remote ? remoteFavorites : favorites) : state.queue;
-  $('queue-count').textContent = tracks.length;
-  $('queue-tab').textContent = showingFavorites ? (remote ? 'FAVORITES · 网易云' : 'FAVORITES') : 'QUEUE';
+  $('queue-count').textContent = state.queue.length;
+  $('show-favorites').textContent = remote ? '收藏 · 网易云' : '收藏';
+  $('queue-tab').classList.toggle('active', !showingFavorites);
   $('queue-empty').firstElementChild.textContent = !showingFavorites ? '队列还空着。告诉 Bob 你想听什么，或自己找一首。'
     : !remote ? '还没有收藏。播放喜欢的歌时，点击爱心保存。'
       : remoteFavoritesState === 'loading' ? '正在读取你在网易云的红心歌曲…'
-        : remoteFavoritesState === 'error' ? '网易云红心歌曲暂时没读到，稍后点 FAV 再试。'
+        : remoteFavoritesState === 'error' ? '网易云红心歌曲暂时没读到，稍后再打开收藏试试。'
           : '网易云「我喜欢的音乐」还是空的。播放喜欢的歌时，点爱心加进去。';
   renderQuickReplies();
   $('queue-empty').hidden = tracks.length > 0;
@@ -331,87 +335,158 @@ function renderQueue() {
   $('show-favorites').setAttribute('aria-pressed', String(showingFavorites));
   $('show-favorites').classList.toggle('active', showingFavorites);
 }
+const favoriteButton = $('favorite');
+const lyricsBox = $('lyrics');
+let historyOpen = false;
+let speakingMessageId = null;
+function splitSentences(text) {
+  // Clause by clause, so the highlight moves at a speaking pace.
+  return String(text || '').split(/(?<=[。！？!?…；;，,\n]|——)/).filter(part => part.length);
+}
+function trackMeta(track) { return [track.artist, track.album].filter(Boolean).join(' · '); }
+/** One line per song: title, then artist · album in small type. */
+function makeSetRow(track, index, tracks) {
+  const row = node('button', 'set-row');
+  row.type = 'button';
+  row.setAttribute('aria-label', `播放 ${track.title}，${track.artist}`);
+  const line = node('span', 'row-line');
+  line.append(node('span', 'row-title', track.title), node('span', 'row-meta', trackMeta(track)));
+  row.append(node('span', 'row-num', String(index + 1)), line);
+  if (track.durationMs) row.append(node('span', 'row-time', formatTime(track.durationMs / 1000)));
+  row.addEventListener('click', async () => {
+    cancelSegment();
+    // A song from an earlier set brings that whole set back as the queue.
+    if (!state.queue.some(item => item.id === track.id) && !(await addTracks(tracks, 'replace'))) return;
+    await playTrack(state.queue.find(item => item.id === track.id) || track);
+  });
+  return row;
+}
+/** The playing song gets its own surface, with the heart and the lyrics inside it. */
+function makeActiveRow(track) {
+  const box = node('div', 'set-active');
+  const row = node('div', 'set-row');
+  const eq = node('span', 'eq');
+  eq.setAttribute('aria-hidden', 'true');
+  eq.append(node('i'), node('i'), node('i'));
+  const line = node('span', 'row-line');
+  line.append(node('span', 'row-title', track.title), node('span', 'row-meta', trackMeta(track)));
+  row.append(eq, line, favoriteButton);
+  box.append(row, lyricsBox);
+  return box;
+}
+function parkActiveExtras() {
+  const holder = $('active-extras');
+  if (favoriteButton.parentElement !== holder) holder.append(favoriteButton);
+  if (lyricsBox.parentElement !== holder) holder.append(lyricsBox);
+}
+function makeBobMessage(message, old) {
+  const article = node('article', `msg-bob${old ? ' old' : ''}`);
+  article.dataset.id = message.id;
+  const head = node('div', 'msg-head');
+  head.append(node('strong', '', 'Bob'), node('time', '', timeLabel(message.createdAt)));
+  if (message.content) {
+    const replay = node('button', 'mini-button');
+    replay.type = 'button';
+    replay.title = '重播';
+    replay.setAttribute('aria-label', '重播 Bob 这段');
+    replay.append(icon('sound'));
+    replay.addEventListener('click', async () => {
+      replay.disabled = true;
+      const request = speechRequest;
+      try {
+        const url = safeUrl(message.speechUrl);
+        if (url) await playSpeech(url, message.id);
+        else {
+          const result = await post('/api/tts', { text: message.content, messageId: message.id });
+          if (request === speechRequest) await playSpeech(result.url, message.id);
+        }
+      } catch (error) { toast(error.message); }
+      finally { replay.disabled = false; }
+    });
+    head.append(replay);
+  }
+  const text = node('p', 'bob-text');
+  for (const part of splitSentences(message.content)) text.append(node('span', 'sentence', part));
+  article.append(head, text);
+  if (message.note && !old) article.append(node('p', 'msg-note', message.note));
+  return article;
+}
 function renderMessages() {
-  const fingerprint = JSON.stringify([state.messages, pendingUser?.id]);
+  const activeId = stageVisible() ? activeTrack.id : '';
+  const fingerprint = JSON.stringify([state.messages, pendingUser?.id, activeId, historyOpen]);
   if (fingerprint === lastStateFingerprint) return;
   lastStateFingerprint = fingerprint;
   const container = $('messages');
   const scroll = $('conversation-scroll');
-  const wasNearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 100;
+  const wasNearBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 120;
+  parkActiveExtras();
   const empty = $('chat-empty');
   for (const child of [...container.children]) if (child !== empty) child.remove();
-  empty.hidden = state.messages.length > 0 || Boolean(pendingUser);
   const messages = [...state.messages];
   if (pendingUser) messages.push(pendingUser);
-  for (const message of messages) {
-    const isUser = message.role === 'user';
-    const article = node('article', `message ${isUser ? 'user' : 'assistant'}${message === pendingUser ? ' pending' : ''}`);
-    const avatar = isUser ? icon('user') : node('img');
-    avatar.classList.add('message-avatar');
-    if (!isUser) { avatar.src = '/assets/bob-pixel-avatar.png'; avatar.alt = 'Bob 的像素头像'; }
-    const messageBody = node('div', 'message-body');
-    const head = node('div', 'message-head');
-    const stamp = node('time', '', timeLabel(message.createdAt));
-    head.append(node('strong', '', isUser ? 'YOU' : 'RADIO BOB'));
-    const footer = node('div', 'message-footer');
-    footer.append(stamp);
-    messageBody.append(head, node('div', 'message-content', message.content || ''));
-    if (!isUser && message.note) messageBody.append(node('p', 'message-note', message.note));
-    if (!isUser && message.content) {
-      const button = node('button', 'speech-button');
-      button.type = 'button';
-      button.setAttribute('aria-label', '听 Bob 说');
-      button.append(icon('play'), node('span', '', 'REPLAY'));
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        const request = speechRequest;
-        try {
-          const url = safeUrl(message.speechUrl);
-          if (url) await playSpeech(url);
-          else {
-            const result = await post('/api/tts', { text: message.content, messageId: message.id });
-            if (request === speechRequest) await playSpeech(result.url);
-          }
-        } catch (error) { toast(error.message); }
-        finally { button.disabled = false; }
-      });
-      footer.append(button);
+  empty.hidden = messages.length > 0;
+  // Only the current exchange is shown: from the listener's latest request onward.
+  let start = 0;
+  for (let i = messages.length - 1; i >= 0; i -= 1) if (messages[i].role === 'user') { start = i; break; }
+  const earlier = messages.slice(0, start).filter(message => message.role !== 'user').length;
+  const toggle = $('history-toggle');
+  toggle.hidden = earlier === 0;
+  toggle.textContent = historyOpen ? '收起更早的' : `更早 · ${earlier} 段`;
+  toggle.setAttribute('aria-expanded', String(historyOpen));
+  const visible = historyOpen ? messages : messages.slice(start);
+  let ownerId = null;
+  if (activeId) for (const message of visible) if (message.role !== 'user' && normalizeTracks(message.tracks).some(track => track.id === activeId)) ownerId = message.id;
+  for (const message of visible) {
+    const old = historyOpen && messages.indexOf(message) < start;
+    if (message.role === 'user') {
+      container.append(node('p', `msg-user${message === pendingUser ? ' pending' : ''}${old ? ' old' : ''}`, `你：${message.content}`));
+      continue;
     }
+    const article = makeBobMessage(message, old);
     const tracks = normalizeTracks(message.tracks);
     if (tracks.length) {
-      const list = node('details', 'message-tracks');
-      const summary = node('summary');
-      const covers = node('span', 'summary-covers');
-      for (const track of tracks.slice(0, 4)) {
-        const tile = node('span', 'summary-cover');
-        if (track.cover) {
-          const image = node('img');
-          image.src = coverUrl(track.cover, 64);
-          image.alt = '';
-          image.loading = 'lazy';
-          image.addEventListener('error', () => image.remove(), { once: true });
-          tile.append(image);
-        }
-        covers.append(tile);
-      }
-      summary.append(covers, node('span', '', `${tracks.length} ${tracks.length === 1 ? 'TRACK' : 'TRACKS'}`));
-      summary.title = tracks.map(track => `${track.title} - ${track.artist}`).join('\n');
-      list.append(summary);
-      const rows = node('div', 'message-track-list');
-      rows.append(...tracks.map((track, index) => makeTrackRow(track, index, 'message')));
-      list.append(rows);
-      const playAll = node('button', 'speech-button play-all');
-      playAll.type = 'button';
-      playAll.setAttribute('aria-label', `播放这一组 ${tracks.length} 首歌`);
-      playAll.append(icon('play'), node('span', '', 'PLAY ALL'));
-      playAll.addEventListener('click', () => playSet(tracks));
-      footer.append(playAll, list);
+      const set = node('div', 'set');
+      const activeIndex = message.id === ownerId ? tracks.findIndex(track => track.id === activeId) : -1;
+      tracks.forEach((track, index) => {
+        if (index === activeIndex) { set.append(makeActiveRow(track)); return; }
+        const row = makeSetRow(track, index, tracks);
+        if (index < activeIndex) row.classList.add('played');
+        set.append(row);
+      });
+      article.append(set);
     }
-    messageBody.append(footer);
-    article.append(avatar, messageBody);
     container.append(article);
   }
+  // A song played from search or favorites still gets its surface at the end of the stream.
+  if (activeId && !ownerId) {
+    const set = node('div', 'set');
+    set.append(makeActiveRow(activeTrack));
+    container.append(set);
+  }
+  syncKaraoke();
+  if (activeId) requestAnimationFrame(() => syncLyrics(true));
   if (wasNearBottom || pendingUser) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+}
+/** Sentence-level karaoke: Fish Audio gives no word timings, so time is shared out by length. */
+function syncKaraoke() {
+  const speaking = Boolean(speakingMessageId) && !speech.paused && !speech.ended;
+  for (const element of document.querySelectorAll('.bob-text.karaoke')) {
+    if (!speaking || element.parentElement.dataset.id !== speakingMessageId) element.classList.remove('karaoke');
+  }
+  if (!speaking) return;
+  const text = [...document.querySelectorAll('.msg-bob')].find(item => item.dataset.id === speakingMessageId)?.querySelector('.bob-text');
+  if (!text) return;
+  text.classList.add('karaoke');
+  const parts = [...text.children];
+  const total = parts.reduce((sum, part) => sum + part.textContent.length, 0) || 1;
+  const fraction = Number.isFinite(speech.duration) && speech.duration > 0 ? speech.currentTime / speech.duration : 0;
+  let reached = 0;
+  let index = parts.length - 1;
+  for (let i = 0; i < parts.length; i += 1) {
+    reached += parts[i].textContent.length;
+    if (reached / total > fraction) { index = i; break; }
+  }
+  parts.forEach((part, i) => { part.classList.toggle('said', i < index); part.classList.toggle('now', i === index); });
 }
 
 async function addTracks(tracks, mode = 'append') {
@@ -429,8 +504,8 @@ async function addTracks(tracks, mode = 'append') {
 }
 function renderNowPlaying() {
   renderStage();
-  $('current-title').textContent = activeTrack?.title || 'No track selected';
-  $('current-artist').textContent = activeTrack?.artist || '';
+  $('current-title').textContent = activeTrack?.title || '今天想听点什么？';
+  $('current-artist').textContent = activeTrack ? trackMeta(activeTrack) : '一种心情，一个场景，或一首喜欢的歌。';
   const cover = activeTrack?.cover;
   renderFavorite();
   if (!music.src) $('duration').textContent = formatTime((activeTrack?.durationMs || 0) / 1000);
@@ -448,21 +523,35 @@ function setNotice(text) {
 function updateTransport() {
   const hasTrack = Boolean(activeTrack || state.queue.length);
   $('play').disabled = !hasTrack || loadingTrack;
-  $('previous').disabled = !hasTrack || loadingTrack;
   $('next').disabled = !hasTrack || loadingTrack;
   const playing = !music.paused && !music.ended;
   const speaking = !speech.paused && !speech.ended;
   $('play-icon').setAttribute('href', playing ? '/assets/icons.svg#i-pause' : '/assets/icons.svg#i-play');
-  $('play').setAttribute('aria-label', playing ? '暂停' : '播放');
-  document.querySelector('.player-panel').classList.toggle('is-playing', playing);
-  $('air-status').classList.toggle('live', playing || speaking);
-  $('air-label').textContent = playing || speaking ? 'ON AIR' : 'STANDBY';
-  $('playback-label').textContent = introPhase ? 'UP NEXT · BOB ON AIR' : loadingTrack ? 'LOADING' : playing ? 'PLAYING'
-    : queueFinished ? 'END OF SET' : activeTrack ? 'PAUSED' : 'STANDBY';
-  $('stop').disabled = false;
+  $('play').setAttribute('aria-label', playing ? '暂停' : introPhase ? '跳过开场，直接放歌' : '播放');
+  $('next').setAttribute('aria-label', introPhase ? '跳过开场，直接放歌' : '下一首');
+  document.body.classList.toggle('is-playing', playing);
+  document.body.classList.toggle('is-speaking', speaking);
+  renderAirStatus();
   $('profile-air').textContent = playing || speaking ? 'LIVE' : 'IDLE';
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : activeTrack ? 'paused' : 'none';
+  setBarsMode(speaking ? 'speech' : playing ? 'music' : 'idle');
   renderStage();
+}
+let eventsStarted = false;
+function renderAirStatus() {
+  const playing = !music.paused && !music.ended;
+  const speaking = !speech.paused && !speech.ended;
+  const index = state.queue.findIndex(track => track.id === activeTrack?.id);
+  const position = index >= 0 && state.queue.length > 1 ? ` · ${index + 1} / ${state.queue.length}` : '';
+  $('air-label').textContent = eventsStarted && !document.body.classList.contains('connected') ? '连接中断，正在重连…'
+    : chatBusy ? 'Bob 在选歌…'
+      : speaking ? 'Bob 正在说…'
+        : loadingTrack ? '正在准备…'
+          : playing ? `放歌中${position}`
+            : queueFinished ? '这一组放完了'
+              : activeTrack && music.getAttribute('src') ? '已暂停' : '待机';
+  $('air-status').classList.toggle('live', speaking || chatBusy);
+  $('air-status').classList.toggle('playing', playing);
 }
 function updateMusicVolume() {
   if (fading) return;
@@ -594,18 +683,18 @@ function fadeOutMusic(duration = 700) {
     step();
   });
 }
-function speakAndWait(url) {
+function speakAndWait(url, messageId = null) {
   return new Promise(resolve => {
     const events = ['ended', 'pause', 'error'];
     const done = () => { for (const name of events) speech.removeEventListener(name, done); resolve(); };
-    playSpeech(url).then(started => {
+    playSpeech(url, messageId).then(started => {
       if (!started || speech.paused || speech.ended) return resolve();
       for (const name of events) speech.addEventListener(name, done);
     }, error => { toast(error.message); resolve(); });
   });
 }
 /** Bob introduces a new set, then the first song starts. */
-async function startSegment(tracks, speechUrl) {
+async function startSegment(tracks, speechUrl, messageId = null) {
   if (!tracks.length) return;
   cancelSegment();
   const token = segmentToken;
@@ -631,7 +720,7 @@ async function startSegment(tracks, speechUrl) {
     renderNowPlaying();
     renderQueue();
     updateTransport();
-    await speakAndWait(speechUrl);
+    await speakAndWait(speechUrl, messageId);
     if (token !== segmentToken) return;
     introPhase = false;
   }
@@ -678,28 +767,29 @@ async function handleQueueEnd() {
   const url = result.speech?.url || result.message?.speechUrl;
   if (autoVoice && url && !entry.spoken) {
     entry.spoken = true;
-    await speakAndWait(url);
+    await speakAndWait(url, result.message?.id);
   }
 }
-async function playSpeech(url) {
+async function playSpeech(url, messageId = null) {
   const source = safeUrl(url);
   if (!source) throw new Error('这段口播暂时无法播放，可以稍后重试。');
   const request = ++speechRequest;
+  speakingMessageId = messageId;
   speech.pause();
   speech.src = source;
   try { await speech.play(); return request === speechRequest; }
   catch (error) {
     if (request !== speechRequest) return false;
-    if (error.name === 'NotAllowedError') { toast('口播已生成，点击消息下方的 REPLAY 即可播放。'); return false; }
+    if (error.name === 'NotAllowedError') { toast('口播已生成，点 Bob 那段话旁边的重播就能听。'); return false; }
     throw new Error('口播音频未能播放，请稍后重试。');
   }
 }
 function updateSpeechState() {
   const playing = !speech.paused && !speech.ended;
-  $('dj-wave').classList.toggle('speaking', playing);
   $('voice-label').textContent = playing ? 'Bob 正在说话…' : voiceLabel();
   updateMusicVolume();
   updateTransport();
+  syncKaraoke();
 }
 
 function coverUrl(url, size) {
@@ -712,27 +802,8 @@ function stageVisible() {
   return Boolean(activeTrack && (introPhase || loadingTrack || queueFinished || music.getAttribute('src')));
 }
 function renderStage() {
-  const visible = stageVisible();
-  $('clock-panel').classList.toggle('has-track', visible);
-  $('now-stage').hidden = !visible;
-  if (!visible) return;
-  const cover = coverUrl(activeTrack.cover, 440);
-  const image = $('now-cover-image');
-  if (cover && image.dataset.source !== cover) {
-    image.dataset.source = cover;
-    image.hidden = true;
-    image.onload = () => { if (image.dataset.source === cover) { image.hidden = false; $('now-cover').classList.add('has-image'); } };
-    image.onerror = () => { if (image.dataset.source === cover) { image.hidden = true; $('now-cover').classList.remove('has-image'); } };
-    $('now-cover').classList.remove('has-image');
-    image.src = cover;
-  } else if (!cover) {
-    image.dataset.source = '';
-    image.hidden = true;
-    image.removeAttribute('src');
-    $('now-cover').classList.remove('has-image');
-  }
-  $('now-cover').classList.toggle('playing', !music.paused && !music.ended);
-  renderLyrics();
+  renderMessages();
+  if (stageVisible()) renderLyrics();
 }
 async function loadLyrics(track) {
   if (!track) return;
@@ -805,8 +876,9 @@ function syncLyrics(force = false) {
 function renderQuickReplies() {
   const container = $('quick-replies');
   const awaiting = queueFinished && Boolean(outro?.result?.tracks?.length);
+  // Replies appear only when Bob is waiting for an answer, or before the first set.
   const options = awaiting ? ['好，接着放', '换点安静的', '来点更有劲的', '换个风格']
-    : state.queue.length ? ['再来几首类似的', '换点安静的', '来点更有劲的']
+    : state.queue.length ? []
       : ['适合专注工作的歌', '深夜放松一下', '来点老派摇滚'];
   container.hidden = chatBusy;
   const key = options.join('|');
@@ -837,6 +909,7 @@ async function sendMessage(event) {
   const content = $('chat-input').value.trim();
   if (!content || chatBusy) return;
   chatBusy = true;
+  renderAirStatus();
   const playerState = currentPlayerState();
   // A new request replaces Bob's end-of-set question; do not let it speak over the reply.
   if (queueFinished) { cancelSegment(); speechRequest += 1; speech.pause(); }
@@ -872,9 +945,9 @@ async function sendMessage(event) {
       const speechUrl = autoVoice && voiceRequest === speechRequest ? result.speech?.url || result.message?.speechUrl : null;
       if (result.speech?.error) toast(`歌曲和文字已准备好；口播暂未生成：${result.speech.error}`);
       // Bob speaks first; the new set starts as soon as he finishes, replacing what was playing.
-      if (tracks.length) await startSegment(tracks, speechUrl);
+      if (tracks.length) await startSegment(tracks, speechUrl, result.message?.id);
       else if (speechUrl) {
-        try { await playSpeech(speechUrl); }
+        try { await playSpeech(speechUrl, result.message?.id); }
         catch (error) { toast(error.message); }
       }
     }
@@ -885,6 +958,7 @@ async function sendMessage(event) {
     toast(error.message);
   } finally {
     chatBusy = false;
+    renderAirStatus();
     $('send').disabled = false;
     $('thinking').hidden = true;
     renderQuickReplies();
@@ -1077,18 +1151,24 @@ music.addEventListener('error', () => {
   updateTransport();
 });
 for (const event of ['play', 'pause', 'ended']) speech.addEventListener(event, updateSpeechState);
+speech.addEventListener('timeupdate', syncKaraoke);
 speech.addEventListener('error', () => { speech.pause(); updateSpeechState(); if (speech.getAttribute('src')) toast('口播音频加载失败，可以点击“听 Bob 说”重试。'); });
 $('play').addEventListener('click', togglePlayback);
-$('stop').addEventListener('click', () => { pausePlayback(); if (music.src) music.currentTime = 0; if (speech.src) speech.currentTime = 0; });
 $('favorite').addEventListener('click', toggleFavorite);
-$('hide-queue').addEventListener('click', () => setLibraryOpen(!libraryOpen));
+$('hide-queue').addEventListener('click', () => setLibraryOpen(false));
+$('library-button').addEventListener('click', () => { if (libraryOpen) setLibraryOpen(false); else selectLibraryTab('queue'); });
+$('history-toggle').addEventListener('click', () => {
+  historyOpen = !historyOpen;
+  renderMessages();
+  // After renderMessages' own scroll-to-latest, so the opened history is in view.
+  if (historyOpen) requestAnimationFrame(() => { $('conversation-scroll').scrollTop = 0; });
+});
 $('show-favorites').addEventListener('click', () => {
   showingFavorites = !showingFavorites;
   selectLibraryTab('queue');
   if (showingFavorites && favoriteSource === 'netease' && remoteFavoritesState !== 'loading') void refreshFavorites();
 });
-$('theme-dark').addEventListener('click', () => setTheme('dark'));
-$('theme-light').addEventListener('click', () => setTheme('light'));
+$('theme-toggle').addEventListener('click', toggleTheme);
 
 function createProfileDots(dialog) {
   const canvas = node('canvas', 'profile-dot-field');
@@ -1290,11 +1370,9 @@ for (const button of document.querySelectorAll('.profile-open')) button.addEvent
   $('profile-dialog').showModal();
   profileDots.start();
 });
-$('previous').addEventListener('click', () => moveTrack(-1));
 $('next').addEventListener('click', () => moveTrack(1));
 $('seek').addEventListener('input', () => { if (Number.isFinite(music.duration)) { music.currentTime = (Number($('seek').value) / 1000) * music.duration; syncLyrics(); } });
 new ResizeObserver(() => syncLyrics(true)).observe($('lyrics'));
-$('volume').addEventListener('input', () => { userVolume = Number($('volume').value); savePreference('radio-bob-volume', userVolume); updateMusicVolume(); });
 $('auto-voice').addEventListener('change', () => { autoVoice = $('auto-voice').checked; savePreference('radio-bob-auto-voice', autoVoice); if (!autoVoice) speech.pause(); });
 $('chat-form').addEventListener('submit', sendMessage);
 $('chat-input').addEventListener('keydown', (event) => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); } });
@@ -1305,12 +1383,11 @@ $('queue-tab').addEventListener('click', () => {
   renderQueue();
 });
 $('search-tab').addEventListener('click', () => selectLibraryTab('search'));
-$('empty-search').addEventListener('click', () => selectLibraryTab('search'));
 document.querySelector('.library-tabs').addEventListener('keydown', (event) => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const target = event.key === 'Home' ? 'queue' : event.key === 'End' ? 'search' : $('queue-tab').getAttribute('aria-selected') === 'true' ? 'search' : 'queue'; selectLibraryTab(target); $(`${target}-tab`).focus(); } });
 $('search-form').addEventListener('submit', searchMusic);
 document.querySelectorAll('.taste-open').forEach(button => button.addEventListener('click', openTaste));
 $('taste-form').addEventListener('submit', saveTaste);
-$('account-button').addEventListener('click', openLogin);
+document.querySelectorAll('.account-open').forEach(button => button.addEventListener('click', () => { if ($('profile-dialog').open) $('profile-dialog').close(); openLogin(); }));
 $('refresh-qr').addEventListener('click', beginQr);
 $('logout').addEventListener('click', logout);
 $('login-dialog').addEventListener('close', stopQrPolling);
@@ -1330,15 +1407,81 @@ if ('mediaSession' in navigator) {
   ]) { try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Optional platform control. */ } }
 }
 
+// On-air bars. They are drawn, not measured: the songs stream from another origin,
+// so the page cannot read their audio. Their shape follows who is on air.
+const barsCanvas = $('bars');
+const barsContext = barsCanvas.getContext('2d');
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const SHEET_OVERLAP = 40;
+let barsMode = 'idle';
+let barsFrame = 0;
+let barsTick = 0;
+let barHeights = [];
+let barTargets = [];
+function setBarsMode(mode) {
+  barsMode = mode;
+  if (!barsFrame) barsFrame = requestAnimationFrame(drawBars);
+}
+function resizeBars() {
+  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  barsCanvas.width = Math.round(barsCanvas.clientWidth * ratio);
+  barsCanvas.height = Math.round(barsCanvas.clientHeight * ratio);
+  barsContext?.setTransform(ratio, 0, 0, ratio, 0, 0);
+  if (!barsFrame) barsFrame = requestAnimationFrame(drawBars);
+}
+function barTarget(i, count, t) {
+  if (barsMode === 'speech') {
+    const phrase = 0.25 + 0.75 * Math.pow(Math.abs(Math.sin(i / 9 + t * 0.9)), 0.8);
+    return phrase * (0.45 + 0.55 * Math.abs(Math.sin(i * 2.3 + t * 9) * Math.cos(i * 0.71 - t * 4)));
+  }
+  if (barsMode === 'music') {
+    const tilt = 0.95 - 0.55 * (i / Math.max(1, count - 1));
+    const beat = 0.75 + 0.25 * Math.abs(Math.sin(t * 4.4));
+    return tilt * beat * (0.35 + 0.65 * Math.abs(Math.sin(i * 1.9 + t * 11) * Math.sin(i * 0.43 + t * 6 + 1)));
+  }
+  return 0.03 + 0.02 * Math.abs(Math.sin(i * 0.9));
+}
+function drawBars(now) {
+  barsFrame = 0;
+  const width = barsCanvas.clientWidth;
+  const height = barsCanvas.clientHeight;
+  if (!barsContext || !width || !height) return;
+  const step = 7;
+  const barWidth = 3;
+  const count = Math.max(8, Math.floor((width - 24) / step));
+  const left = (width - (count * step - (step - barWidth))) / 2;
+  const usable = Math.max(10, height - SHEET_OVERLAP - 6);
+  if (barHeights.length !== count) { barHeights = Array(count).fill(0.03); barTargets = Array(count).fill(0.03); }
+  const still = reducedMotion.matches || document.hidden;
+  if (still || now - barsTick > 95) {
+    barsTick = now;
+    for (let i = 0; i < count; i += 1) {
+      barTargets[i] = still && barsMode !== 'idle' ? 0.2 + 0.5 * Math.abs(Math.sin(i / 7)) : barTarget(i, count, now / 1000);
+    }
+  }
+  let moving = false;
+  barsContext.clearRect(0, 0, width, height);
+  barsContext.fillStyle = '#f2f2f4';
+  for (let i = 0; i < count; i += 1) {
+    const delta = barTargets[i] - barHeights[i];
+    barHeights[i] += still ? delta : delta * 0.28;
+    if (Math.abs(delta) > 0.002) moving = true;
+    const visible = Math.max(3, barHeights[i] * usable);
+    barsContext.fillRect(left + i * step, height - SHEET_OVERLAP - visible, barWidth, visible + SHEET_OVERLAP);
+  }
+  if (!still && (barsMode !== 'idle' || moving)) barsFrame = requestAnimationFrame(drawBars);
+}
+new ResizeObserver(resizeBars).observe(barsCanvas);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !barsFrame) barsFrame = requestAnimationFrame(drawBars); });
+
 async function start() {
-  setTheme(readPreference('radio-bob-theme', 'dark'));
+  applyTheme();
   setLibraryOpen(false);
   updateClock();
   setInterval(updateClock, 10000);
   renderStatus();
   const savedVolume = Number(readPreference('radio-bob-volume', '0.7'));
   userVolume = Number.isFinite(savedVolume) ? Math.max(0, Math.min(1, savedVolume)) : 0.7;
-  $('volume').value = userVolume;
   updateMusicVolume();
   await Promise.allSettled([
     refreshStatus(),
@@ -1346,6 +1489,7 @@ async function start() {
   ]);
   if ('EventSource' in window) {
     const events = new EventSource('/api/events');
+    eventsStarted = true;
     events.addEventListener('state', event => {
       try { applyState(JSON.parse(event.data)); } catch { /* Ignore malformed transient event. */ }
     });
@@ -1355,15 +1499,11 @@ async function start() {
     });
     events.addEventListener('open', () => {
       document.body.classList.add('connected');
-      $('connection-label').textContent = 'CONNECTED.';
-      $('chat-connection').textContent = 'Connected to Radio Bob server';
-      $('dj-live-label').textContent = 'LIVE';
+      renderAirStatus();
     });
     events.addEventListener('error', () => {
       document.body.classList.remove('connected');
-      $('connection-label').textContent = 'RECONNECTING.';
-      $('chat-connection').textContent = 'Reconnecting to Radio Bob server…';
-      $('dj-live-label').textContent = 'OFFLINE';
+      renderAirStatus();
     });
     window.addEventListener('pagehide', () => { events.close(); stopQrPolling(); }, { once: true });
   }

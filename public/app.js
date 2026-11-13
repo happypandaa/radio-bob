@@ -1407,9 +1407,39 @@ if ('mediaSession' in navigator) {
   ]) { try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* Optional platform control. */ } }
 }
 
-// On-air bars. They are drawn, not measured: the songs stream from another origin,
-// so the page cannot read their audio. Their shape follows who is on air.
+// On-air bars. Bob's voice is served by our own server, so while he talks the bars
+// are his real loudness, scrolling like tape. Songs stream from NetEase and are
+// still drawn from a pattern that follows the music state.
 const barsCanvas = $('bars');
+let audioContext = null;
+let voiceAnalyser = null;
+let voiceSamples = null;
+let voiceHistory = [];
+// Routing the speech element through Web Audio is only safe once the context runs,
+// otherwise Bob would go silent; so it is wired up on the listener's first gesture.
+function ensureVoiceAnalyser() {
+  if (!voiceAnalyser && window.AudioContext) {
+    try {
+      audioContext = new AudioContext();
+      const source = audioContext.createMediaElementSource(speech);
+      voiceAnalyser = audioContext.createAnalyser();
+      voiceAnalyser.fftSize = 1024;
+      voiceAnalyser.smoothingTimeConstant = 0;
+      source.connect(voiceAnalyser);
+      voiceAnalyser.connect(audioContext.destination);
+      voiceSamples = new Uint8Array(voiceAnalyser.fftSize);
+    } catch { voiceAnalyser = null; }
+  }
+  if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {});
+}
+for (const type of ['pointerdown', 'keydown']) window.addEventListener(type, ensureVoiceAnalyser, { capture: true });
+speech.addEventListener('play', () => { if (audioContext?.state === 'suspended') audioContext.resume().catch(() => {}); });
+function voiceLevel() {
+  voiceAnalyser.getByteTimeDomainData(voiceSamples);
+  let sum = 0;
+  for (const value of voiceSamples) { const x = (value - 128) / 128; sum += x * x; }
+  return Math.min(1, Math.pow(Math.sqrt(sum / voiceSamples.length) * 4.2, 0.75));
+}
 const barsContext = barsCanvas.getContext('2d');
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const SHEET_OVERLAP = 40;
@@ -1429,17 +1459,13 @@ function resizeBars() {
   barsContext?.setTransform(ratio, 0, 0, ratio, 0, 0);
   if (!barsFrame) barsFrame = requestAnimationFrame(drawBars);
 }
+// The stand-in shape is deliberately plain: a slow, smooth swell, no jitter.
 function barTarget(i, count, t) {
-  if (barsMode === 'speech') {
-    const phrase = 0.25 + 0.75 * Math.pow(Math.abs(Math.sin(i / 9 + t * 0.9)), 0.8);
-    return phrase * (0.45 + 0.55 * Math.abs(Math.sin(i * 2.3 + t * 9) * Math.cos(i * 0.71 - t * 4)));
-  }
-  if (barsMode === 'music') {
-    const tilt = 0.95 - 0.55 * (i / Math.max(1, count - 1));
-    const beat = 0.75 + 0.25 * Math.abs(Math.sin(t * 4.4));
-    return tilt * beat * (0.35 + 0.65 * Math.abs(Math.sin(i * 1.9 + t * 11) * Math.sin(i * 0.43 + t * 6 + 1)));
-  }
-  return 0.03 + 0.02 * Math.abs(Math.sin(i * 0.9));
+  if (barsMode === 'idle') return 0.03;
+  const x = i / Math.max(1, count - 1);
+  const speed = barsMode === 'speech' ? 1.6 : 0.6;
+  const wave = 0.5 + 0.3 * Math.sin(x * 9 + t * speed) + 0.2 * Math.sin(x * 4 - t * speed * 0.6);
+  return 0.12 + 0.4 * wave * (0.75 + 0.25 * Math.sin(x * Math.PI));
 }
 function drawBars(now) {
   barsFrame = 0;
@@ -1453,8 +1479,17 @@ function drawBars(now) {
   const usable = Math.max(10, height - SHEET_OVERLAP - 6);
   if (barHeights.length !== count) { barHeights = Array(count).fill(0.03); barTargets = Array(count).fill(0.03); }
   const still = reducedMotion.matches || document.hidden;
-  if (still || now - barsTick > 95) {
-    barsTick = now;
+  const live = barsMode === 'speech' && voiceAnalyser && audioContext?.state === 'running';
+  if (live && !still) {
+    if (now - barsTick > 55) {
+      barsTick = now;
+      voiceHistory.push(voiceLevel());
+      if (voiceHistory.length > count) voiceHistory.splice(0, voiceHistory.length - count);
+      const pad = count - voiceHistory.length;
+      for (let i = 0; i < count; i += 1) barTargets[i] = Math.max(0.03, i < pad ? 0.03 : voiceHistory[i - pad]);
+    }
+  } else {
+    if (barsMode !== 'speech') voiceHistory = [];
     for (let i = 0; i < count; i += 1) {
       barTargets[i] = still && barsMode !== 'idle' ? 0.2 + 0.5 * Math.abs(Math.sin(i / 7)) : barTarget(i, count, now / 1000);
     }
@@ -1464,7 +1499,7 @@ function drawBars(now) {
   barsContext.fillStyle = '#f2f2f4';
   for (let i = 0; i < count; i += 1) {
     const delta = barTargets[i] - barHeights[i];
-    barHeights[i] += still ? delta : delta * 0.28;
+    barHeights[i] += still ? delta : delta * (live ? 0.5 : 0.12);
     if (Math.abs(delta) > 0.002) moving = true;
     const visible = Math.max(3, barHeights[i] * usable);
     barsContext.fillRect(left + i * step, height - SHEET_OVERLAP - visible, barWidth, visible + SHEET_OVERLAP);

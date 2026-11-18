@@ -17,9 +17,9 @@
       <div class="aurora" aria-hidden="true"><i class="blob blob-a"></i><i class="blob blob-b"></i><i class="blob blob-c"></i></div>
       <div class="leds" aria-hidden="true"></div>
       <header class="station-header">
-        <button class="station-brand profile-open" type="button" aria-label="关于 Radio Bob"><img class="brand-avatar" src="/assets/bob-pixel-avatar.png" alt=""></button>
+        <button id="dj-switcher" class="station-brand dj-open" type="button" aria-label="切换 DJ，当前 Bob" aria-haspopup="dialog" aria-controls="dj-dialog"><img id="brand-avatar" class="brand-avatar" src="/assets/bob-pixel-avatar.png" alt=""></button>
         <div class="station-id">
-          <span class="dot-name">Radio Bob</span>
+          <button id="station-name" class="dot-name profile-open" type="button" aria-label="关于 Radio Bob">Radio Bob</button>
           <span class="air-status" id="air-status" role="status"><span class="status-dot"></span><span id="air-label">待机</span></span>
         </div>
         <div class="header-actions">
@@ -72,7 +72,7 @@
             <div id="quick-replies" class="quick-replies" role="group" aria-label="快捷回复"></div>
           </div>
         </div>
-        <form id="chat-form" class="chat-form"><label for="chat-input" class="sr-only">告诉 Bob 你想听什么</label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="跟 Bob 说点什么…"></textarea><button id="send" class="send-button" type="submit" aria-label="发送给 Bob"><svg class="icon"><use href="/assets/icons.svg#i-arrow"/></svg></button></form>
+        <form id="chat-form" class="chat-form"><label id="chat-input-label" for="chat-input" class="sr-only">告诉 Bob 你想听什么</label><textarea id="chat-input" rows="1" maxlength="2000" placeholder="跟 Bob 说点什么…"></textarea><button id="send" class="send-button" type="submit" aria-label="发送给 Bob"><svg class="icon"><use href="/assets/icons.svg#i-arrow"/></svg></button></form>
       </section>
     </section>
   </main>
@@ -82,14 +82,37 @@
     <button id="favorite" class="ghost-button favorite-button" type="button" aria-label="收藏当前歌曲" aria-pressed="false"><svg class="icon"><use href="/assets/icons.svg#i-heart"/></svg></button>
   </div>
 
-  <dialog id="profile-dialog" class="modal profile-modal" aria-labelledby="profile-heading">
-    <form method="dialog"><button class="round-button modal-close" aria-label="关闭 Bob 的资料"><svg class="icon"><use href="/assets/icons.svg#i-close"/></svg></button></form>
-    <div class="profile-hero"><div class="profile-avatar-wrap"><img src="/assets/bob-pixel-avatar.png" alt="Bob 的像素头像" class="profile-avatar"><span class="profile-avatar-status" aria-hidden="true"></span></div><div><h2 id="profile-heading" class="dot-name">Radio Bob</h2><p class="profile-tagline">一开机我就打碟</p></div></div>
-    <div class="profile-description"><p>你的私人 DJ，会选歌的 taste.md <svg class="icon"><use href="/assets/icons.svg#i-headphones"/></svg></p><p>Your mood is my prompt.</p><p>Good music. Your own frequency.</p></div>
-    <div class="profile-stats"><div><span>ON AIR</span><strong id="profile-air">STANDBY</strong></div><div><span>GENRES</span><strong id="profile-genres">—</strong></div><div><span>LISTENER</span><strong>1</strong></div></div>
-    <div class="profile-taste"><div id="profile-genres-tags" class="genre-tags"><span class="profile-empty-taste">还没有品味资料，告诉 Bob 你喜欢什么。</span></div><button id="profile-taste-edit" class="pill-button taste-open" type="button">EDIT TASTE <svg class="icon"><use href="/assets/icons.svg#i-sliders"/></svg></button><button class="pill-button account-open" type="button">网易云账号</button></div>
+  <dialog id="dj-dialog" class="modal dj-modal" aria-labelledby="dj-heading">
+    <form method="dialog"><button class="round-button modal-close" aria-label="关闭 DJ 选择"><svg class="icon"><use href="/assets/icons.svg#i-close"/></svg></button></form>
+    <p class="eyebrow">YOUR FREQUENCY</p><h2 id="dj-heading">选择 DJ</h2>
+    <p class="modal-description">换一位 DJ，接着你们上次的对话。</p>
+    <div id="dj-list" class="dj-list" role="group" aria-label="DJ 列表"></div>
+    <p id="dj-switch-status" class="field-hint" role="status"></p>
+  </dialog>
 
-    <div class="profile-footer">AI × YOUR TASTE</div>
+  <dialog id="profile-dialog" class="modal profile-modal" aria-labelledby="profile-heading">
+    <header class="profile-hero">
+      <form method="dialog"><button class="round-button modal-close" aria-label="关闭 DJ 资料"><svg class="icon" aria-hidden="true"><use href="/assets/icons.svg#i-close"/></svg></button></form>
+      <button class="profile-avatar-wrap dj-open" type="button" aria-label="切换 DJ" aria-haspopup="dialog" aria-controls="dj-dialog" title="切换 DJ">
+        <img id="profile-avatar" src="/assets/bob-pixel-avatar.png" alt="Bob 的像素头像" class="profile-avatar">
+      </button>
+      <div class="profile-identity">
+        <p class="profile-air" id="profile-air" role="status">待机</p>
+        <h2 id="profile-heading" class="dot-name">Radio Bob</h2>
+        <p id="profile-tagline" class="profile-tagline">一开机我就打碟</p>
+      </div>
+    </header>
+    <div class="profile-body">
+      <div class="profile-description" id="profile-description"><p>你的私人 DJ，会选歌的 taste.md</p><p>Your mood is my prompt.</p><p>Good music. Your own frequency.</p></div>
+      <section class="profile-taste" aria-labelledby="profile-taste-heading">
+        <h3 id="profile-taste-heading">音乐品味</h3>
+        <div id="profile-genres-tags" class="genre-tags"><span class="profile-empty-taste">还没有品味资料，告诉 Bob 你喜欢什么。</span></div>
+      </section>
+      <div class="profile-actions">
+        <button id="profile-taste-edit" class="profile-action taste-open" type="button"><svg class="icon" aria-hidden="true"><use href="/assets/icons.svg#i-sliders"/></svg>编辑品味</button>
+        <button class="profile-action account-open" type="button"><svg class="icon" aria-hidden="true"><use href="/assets/icons.svg#i-user"/></svg>网易云账号</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="taste-dialog" class="modal taste-modal" aria-labelledby="taste-heading"><form method="dialog"><button class="round-button modal-close" aria-label="关闭品味设置"><svg class="icon"><use href="/assets/icons.svg#i-close"/></svg></button></form><p class="eyebrow">YOUR MUSICAL DNA</p><h2 id="taste-heading">你的音乐品味</h2><p class="modal-description">喜欢的歌手、常听的风格、想避开的音乐。<br>写得随意一点，就像告诉一个朋友。</p><form id="taste-form"><label for="taste-input">TASTE.MD</label><textarea id="taste-input" rows="10" maxlength="12000" placeholder="我喜欢的歌手和乐队：&#10;&#10;常听的音乐风格：&#10;&#10;工作时 / 夜晚想听：&#10;&#10;不太喜欢："></textarea><p class="field-hint">保存在这台电脑，用于之后的选歌与聊天。</p><button class="primary-button" id="save-taste" type="submit">SAVE TASTE</button></form>    <div class="profile-settings"><label class="voice-setting"><span id="voice-state"><svg class="icon"><use href="/assets/icons.svg#i-sound"/></svg><span id="voice-label">DJ 口播</span></span><span class="toggle-label">自动口播<input id="auto-voice" type="checkbox" checked><span class="toggle" aria-hidden="true"></span></span></label><div class="service-status" id="service-status" aria-label="服务连接状态"><span class="service" id="claude-status"><i></i>AI</span><span class="service" id="tts-status"><i></i>Fish</span><span class="service" id="music-status"><i></i>Music</span><button class="text-button" id="refresh-status" type="button">CHECK ↗</button></div></div></dialog>

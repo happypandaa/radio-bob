@@ -10,11 +10,11 @@ import { controlIntent } from './router.mjs';
 import { bestMatch } from './match.mjs';
 import { createMusicSessionStore } from './music-session.mjs';
 
-export function createRadioApplication({ root, env = process.env, dataDir, profileDir, cacheDir = join(root, '.data', 'tts'), musicTransport, managed } = {}) {
+export function createRadioApplication({ root, env = process.env, dataDir, profileDir, cacheDir = join(root, '.data', 'tts'), musicTransport, managed, djs } = {}) {
 // Managed instances use the two declared keys; obsolete saved options must not
 // change the default service, model or voice after an application update.
 if (managed) env = { ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY, FISH_API_KEY: env.FISH_API_KEY };
-const store = createStore(root, { dataDir, profileDir });
+const store = createStore(root, { dataDir, profileDir, djs });
 let musicSession;
 try {
   musicSession = managed
@@ -39,18 +39,17 @@ const clients = new Set();
 const active = new Set();
 let closing = false;
 let closePromise;
-let chatBusy = false;
 let cachedStatus;
 let statusAt = 0;
 let authRevision = 0;
 const pendingLogins = new Map();
 const QR_LIFETIME_MS = 5 * 60_000;
-// Bob's proposed next set when a queue ends; accepted by a short reply or PLAY ALL.
-let pendingNext = null;
-let lastOutroKey = '';
-let outroBusy = false;
-// Any explicit listener action supersedes an outro that is still being prepared.
-let listenerEpoch = 0;
+// Each DJ owns its pending programme as well as its saved conversation.
+const sessions = new Map();
+function sessionFor(djId) {
+  if (!sessions.has(djId)) sessions.set(djId, { chatBusy: false, pendingNext: null, lastOutroKey: '', outroBusy: false, listenerEpoch: 0 });
+  return sessions.get(djId);
+}
 const queueKey = queue => queue.map(item => item.id).join(',');
 const OUTRO_REQUEST = '（这一组歌快播完了，听众暂时没有新的要求。）';
 
@@ -60,15 +59,15 @@ async function findTrack(song) {
   // A combined query can rank other versions first; the title alone often finds the original.
   return bestMatch(song, await music.search(song.title, 10));
 }
-function planContext(message, extra = {}) {
-  return { message, taste: store.taste(), history: store.state().messages.slice(-12).map(({ role, content }) => ({ role, content })),
-    plays: store.recentPlays(), now: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }), ...extra };
+function planContext(djStore, message, extra = {}) {
+  return { message, taste: djStore.taste(), history: djStore.state().messages.slice(-12).map(({ role, content }) => ({ role, content })),
+    plays: djStore.recentPlays(), now: new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }), ...extra };
 }
-async function produceSegment(context, exclude = new Set(), progress = () => {}) {
+async function produceSegment(djStore, context, exclude = new Set(), progress = () => {}) {
   const steps = { plan: 'active', match: 'pending', voice: tts.configured ? 'pending' : 'skipped' };
   const update = change => { Object.assign(steps, change); progress({ ...steps }); };
   update({});
-  const plan = await claude.plan(context);
+  const plan = await claude.plan(context, { persona: djStore.dj.persona });
   update({ plan: 'done', match: 'active', ...(tts.configured ? { voice: 'active' } : {}) });
   const [found, speech] = await Promise.all([
     Promise.allSettled(plan.play.map(findTrack)).finally(() => update({ match: 'done' })),
@@ -195,6 +194,12 @@ async function handle(req, res) {
     }
     if (path === '/api/status' && method === 'GET') return json(res, 200, await serviceStatus());
     if (path === '/api/state' && method === 'GET') return json(res, 200, store.state());
+    if (path === '/api/dj/select' && method === 'POST') {
+      const data = await body(req);
+      const state = store.selectDj(text(data.djId, 64, 'DJ'));
+      broadcast();
+      return json(res, 200, state);
+    }
     if (path === '/api/taste' && method === 'GET') return json(res, 200, { text: store.taste() });
     if (path === '/api/taste' && method === 'PUT') {
       const data = await body(req);
@@ -222,24 +227,27 @@ async function handle(req, res) {
     if (songId && method === 'GET') return json(res, 200, await music.resolve(songId[1]));
     if (path === '/api/queue' && method === 'POST') {
       const data = await body(req);
+      const djStore = store.forDj(data.djId);
+      const session = sessionFor(djStore.djId);
       if (!Array.isArray(data.tracks) || data.tracks.length > 50 || !['append', 'replace'].includes(data.mode)) throw fail('队列参数不正确。');
-      const existing = data.mode === 'append' ? store.get('queue', []) : [];
+      const existing = data.mode === 'append' ? djStore.get('queue', []) : [];
       const unique = new Map([...existing, ...data.tracks.map(track)].map(item => [item.id, item]));
       const queue = [...unique.values()].slice(0, 100);
-      if (data.mode === 'replace') { pendingNext = null; listenerEpoch += 1; }
-      lastOutroKey = '';
-      store.set('queue', queue); broadcast(); return json(res, 200, { queue });
+      if (data.mode === 'replace') { session.pendingNext = null; session.listenerEpoch += 1; }
+      session.lastOutroKey = '';
+      djStore.set('queue', queue); broadcast(); return json(res, 200, { djId: djStore.djId, queue });
     }
     if (path === '/api/player' && method === 'POST') {
       const data = await body(req);
+      const djStore = store.forDj(data.djId);
       if (!['play', 'pause', 'skip', 'ended'].includes(data.action)) throw fail('不支持这个播放操作。');
-      const current = store.get('queue', []).find(t => t.id === String(data.trackId));
+      const current = djStore.get('queue', []).find(t => t.id === String(data.trackId));
       if (current) {
-        if (data.action === 'play') store.set('nowPlayingId', current.id);
-        store.recordPlay(current, data.action, Math.max(0, Math.min(Number(data.positionMs) || 0, 86400000)));
+        if (data.action === 'play') djStore.set('nowPlayingId', current.id);
+        djStore.recordPlay(current, data.action, Math.max(0, Math.min(Number(data.positionMs) || 0, 86400000)));
       }
-      if (Number.isFinite(data.volume)) store.set('volume', Math.min(1, Math.max(0, data.volume)));
-      broadcast(); return json(res, 200, { ok: true });
+      if (Number.isFinite(data.volume)) djStore.set('volume', Math.min(1, Math.max(0, data.volume)));
+      broadcast(); return json(res, 200, { djId: djStore.djId, ok: true });
     }
     if (path === '/api/login/qr' && method === 'GET') {
       const revision = authRevision;
@@ -271,73 +279,78 @@ async function handle(req, res) {
     }
     if (path === '/api/tts' && method === 'POST') {
       const data = await body(req);
-      const message = data.messageId ? store.message(data.messageId) : null;
+      const djStore = store.forDj(data.djId);
+      const message = data.messageId ? djStore.message(data.messageId) : null;
       if (data.messageId && message?.role !== 'assistant') throw fail('没有找到这条主持内容。', 404);
       const result = await tts.synthesize(text(message?.content || data.text, 800, '口播内容'));
-      if (message) { store.speech(message.id, result.url); broadcast(); }
-      return json(res, 200, result);
+      if (message) { djStore.speech(message.id, result.url); broadcast(); }
+      return json(res, 200, { ...result, djId: djStore.djId });
     }
     if (path === '/api/chat' && method === 'POST') {
       const data = await body(req);
+      const djStore = store.forDj(data.djId);
+      const session = sessionFor(djStore.djId);
       const message = text(data.message, 2000, '你的需求');
       const action = controlIntent(message);
       if (action) {
-        const queue = store.get('queue', []);
-        store.addMessage('user', message);
+        const queue = djStore.get('queue', []);
+        djStore.addMessage('user', message);
         const idle = ['ended', 'idle'].includes(data.playerState);
-        if (pendingNext && (action === 'accept' || (action === 'play' && idle))) {
-          const next = pendingNext.tracks;
-          pendingNext = null;
-          lastOutroKey = '';
-          store.set('queue', next);
-          const response = store.addMessage('assistant', '好，那就接着放。');
+        if (session.pendingNext && (action === 'accept' || (action === 'play' && idle))) {
+          const next = session.pendingNext.tracks;
+          session.pendingNext = null;
+          session.lastOutroKey = '';
+          djStore.set('queue', next);
+          const response = djStore.addMessage('assistant', '好，那就接着放。');
           broadcast();
-          return json(res, 200, { message: response, tracks: [], queue: next, control: { action: 'start-queue' } });
+          return json(res, 200, { djId: djStore.djId, message: response, tracks: [], queue: next, control: { action: 'start-queue' } });
         }
         const effective = action === 'accept' ? 'play' : action;
         const descriptions = { play: '好的，继续播放。', pause: '好的，先暂停。', next: '好的，切到下一首。', previous: '好的，回到上一首。' };
-        const response = store.addMessage('assistant', queue.length ? descriptions[effective] : '队列里还没有歌曲。先搜一首歌，或者告诉我你想听什么。');
+        const response = djStore.addMessage('assistant', queue.length ? descriptions[effective] : '队列里还没有歌曲。先搜一首歌，或者告诉我你想听什么。');
         broadcast();
-        return json(res, 200, { message: response, tracks: [], queue, ...(queue.length ? { control: { action: effective } } : {}) });
+        return json(res, 200, { djId: djStore.djId, message: response, tracks: [], queue, ...(queue.length ? { control: { action: effective } } : {}) });
       }
-      if (chatBusy) throw fail('DJ 正在准备上一段节目，请稍等。', 409);
-      chatBusy = true;
+      if (session.chatBusy) throw fail('DJ 正在准备上一段节目，请稍等。', 409);
+      session.chatBusy = true;
       try {
-        const context = planContext(message);
-        pendingNext = null;
-        listenerEpoch += 1;
-        store.addMessage('user', message); broadcast();
-        const { plan, tracks, speech, missing } = await produceSegment(context, new Set(), broadcastProgress);
+        const context = planContext(djStore, message);
+        session.pendingNext = null;
+        session.listenerEpoch += 1;
+        djStore.addMessage('user', message); broadcast();
+        const { plan, tracks, speech, missing } = await produceSegment(djStore, context, new Set(), steps => broadcastProgress({ djId: djStore.djId, ...steps }));
         const note = missing ? `有 ${missing} 首推荐暂时没在曲库找到，可以试试直接搜歌。` : null;
-        const response = store.addMessage('assistant', plan.say, tracks, speech.url || null, note);
-        if (tracks.length) { store.set('queue', tracks); lastOutroKey = ''; }
-        store.recordPlan(plan, tracks); broadcast();
-        return json(res, 200, { message: response, tracks, speech, reason: plan.reason, queue: store.get('queue', []) });
-      } finally { chatBusy = false; }
+        const response = djStore.addMessage('assistant', plan.say, tracks, speech.url || null, note);
+        if (tracks.length) { djStore.set('queue', tracks); session.lastOutroKey = ''; }
+        djStore.recordPlan(plan, tracks); broadcast();
+        return json(res, 200, { djId: djStore.djId, message: response, tracks, speech, reason: plan.reason, queue: djStore.get('queue', []) });
+      } finally { session.chatBusy = false; }
     }
     if (path === '/api/dj/outro' && method === 'POST') {
       const data = await body(req);
-      const queue = store.get('queue', []);
+      const djStore = store.forDj(data.djId);
+      const session = sessionFor(djStore.djId);
+      const queue = djStore.get('queue', []);
       const key = queueKey(queue);
       if (!queue.length || String(data.lastTrackId) !== queue.at(-1).id) throw fail('队列已经变化，这一段不需要收尾。', 409);
-      if (key === lastOutroKey) throw fail('这一组歌的收尾已经准备好了。', 409);
-      if (chatBusy || outroBusy) throw fail('DJ 正在准备上一段节目，请稍等。', 409);
-      outroBusy = true;
-      lastOutroKey = key;
-      const epoch = listenerEpoch;
+      if (key === session.lastOutroKey) throw fail('这一组歌的收尾已经准备好了。', 409);
+      if (session.chatBusy || session.outroBusy) throw fail('DJ 正在准备上一段节目，请稍等。', 409);
+      session.outroBusy = true;
+      session.lastOutroKey = key;
+      const epoch = session.listenerEpoch;
       try {
-        const { plan, tracks, speech } = await produceSegment(
-          planContext(OUTRO_REQUEST, { segment: 'queue-ending', justPlayed: queue }), new Set(queue.map(item => item.id)));
+        const { plan, tracks, speech } = await produceSegment(djStore,
+          planContext(djStore, OUTRO_REQUEST, { segment: 'queue-ending', justPlayed: queue }), new Set(queue.map(item => item.id)));
         // The listener may have started something else while Bob was thinking.
-        if (epoch !== listenerEpoch || queueKey(store.get('queue', [])) !== key) throw fail('队列已经变化，这一段不需要收尾。', 409);
-        const response = store.addMessage('assistant', plan.say, tracks, speech.url || null);
-        pendingNext = tracks.length ? { messageId: response.id, tracks } : null;
-        store.recordPlan(plan, tracks); broadcast();
-        return json(res, 200, { message: response, tracks, speech });
+        if (epoch !== session.listenerEpoch || queueKey(djStore.get('queue', [])) !== key) throw fail('队列已经变化，这一段不需要收尾。', 409);
+        const response = djStore.addMessage('assistant', plan.say, tracks, speech.url || null);
+        session.pendingNext = tracks.length ? { messageId: response.id, tracks } : null;
+        djStore.recordPlan(plan, tracks); broadcast();
+        return json(res, 200, { djId: djStore.djId, message: response, tracks, speech });
       } catch (error) {
-        if (lastOutroKey === key && error.status !== 409) lastOutroKey = '';
+        if (session.lastOutroKey === key && error.status !== 409) session.lastOutroKey = '';
         throw error;
-      } finally { outroBusy = false; }
+      } finally { session.outroBusy = false; }
     }
     if (path.startsWith('/api/')) throw fail('接口不存在。', 404);
     const audio = path.match(/^\/tts\/([a-f0-9]{64})\.(mp3|wav)$/);

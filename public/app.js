@@ -3,7 +3,14 @@
 const $ = (id) => document.getElementById(id);
 const music = $('music-audio');
 const speech = $('speech-audio');
-const state = { messages: [], queue: [], nowPlayingId: null, taste: '', volume: 0.7 };
+const defaultDj = { id: 'bob', name: 'Bob', stationName: 'Radio Bob', avatar: '/assets/bob-pixel-avatar.png', tagline: '一开机我就打碟' };
+const state = { djId: null, djs: [defaultDj], messages: [], queue: [], nowPlayingId: null, taste: '', volume: 0.7 };
+const djViews = new Map();
+const chatRequests = new Map();
+let djEpoch = 0;
+let selectingDj = false;
+let djIdentityKey = '';
+let djListKey = '';
 let services = null;
 let activeTrack = null;
 let pendingUser = null;
@@ -119,7 +126,101 @@ async function api(path, options = {}) {
   } finally { clearTimeout(timeout); }
 }
 function post(path, body, options = {}) {
-  return api(path, { ...options, method: 'POST', body: JSON.stringify(body) });
+  const scoped = ['/api/chat', '/api/dj/outro', '/api/tts', '/api/queue', '/api/player'].includes(path);
+  return api(path, { ...options, method: 'POST', body: JSON.stringify(scoped ? { djId: state.djId, ...body } : body) });
+}
+
+function currentDj() { return state.djs.find(dj => dj.id === state.djId) || defaultDj; }
+function renderDj() {
+  const key = JSON.stringify([state.djId, state.djs]);
+  if (djIdentityKey === key) return;
+  djIdentityKey = key;
+  const dj = currentDj();
+  const stationName = dj.stationName || dj.name;
+  $('station-name').textContent = stationName;
+  $('station-name').setAttribute('aria-label', `关于 ${stationName}`);
+  $('dj-switcher').setAttribute('aria-label', `切换 DJ，当前 ${dj.name}`);
+  for (const id of ['brand-avatar', 'profile-avatar']) $(id).src = safeUrl(dj.avatar, true) || defaultDj.avatar;
+  $('profile-avatar').alt = `${dj.name} 的头像`;
+  $('profile-heading').textContent = stationName;
+  $('profile-tagline').textContent = dj.tagline || '';
+  if (dj.description) $('profile-description').replaceChildren(...dj.description.split('\n').map(line => node('p', '', line)));
+  else $('profile-description').replaceChildren(node('p', '', '你的私人 DJ，会选歌的 taste.md'), node('p', '', 'Your mood is my prompt.'), node('p', '', 'Good music. Your own frequency.'));
+  $('conversation-scroll').setAttribute('aria-label', `${dj.name} 的节目流`);
+  $('messages').setAttribute('aria-label', `与 ${dj.name} 的对话`);
+  $('chat-input-label').textContent = `告诉 ${dj.name} 你想听什么`;
+  $('chat-input').placeholder = `跟 ${dj.name} 说点什么…`;
+  $('send').setAttribute('aria-label', `发送给 ${dj.name}`);
+  $('thinking-steps').querySelector('[data-step="plan"]').textContent = `${dj.name} 在选歌`;
+  document.title = `${stationName} · Your personal radio`;
+  renderDjList();
+}
+function renderDjList() {
+  const key = JSON.stringify([state.djId, state.djs, selectingDj]);
+  if (djListKey === key) return;
+  djListKey = key;
+  $('dj-list').replaceChildren(...state.djs.map(dj => {
+    const selected = dj.id === state.djId;
+    const button = node('button', 'dj-option');
+    button.type = 'button';
+    button.dataset.djId = dj.id;
+    button.disabled = selectingDj;
+    button.setAttribute('aria-pressed', String(selected));
+    const avatar = node('img');
+    avatar.src = safeUrl(dj.avatar, true) || defaultDj.avatar;
+    avatar.alt = '';
+    const copy = node('span', 'dj-option-copy');
+    copy.append(node('strong', '', dj.name), node('small', '', dj.tagline || dj.stationName || '你的私人 DJ'));
+    button.append(avatar, copy, node('span', 'dj-option-status', selected ? '当前 DJ' : '切换'));
+    button.addEventListener('click', () => selectDj(dj.id));
+    return button;
+  }));
+}
+function syncChatRequest() {
+  const work = chatRequests.get(state.djId);
+  chatBusy = Boolean(work);
+  pendingUser = work?.pendingUser || null;
+  $('send').disabled = chatBusy;
+  $('thinking').hidden = !chatBusy;
+  if (work) { renderProgress(work.steps); $('chat-form').setAttribute('aria-busy', 'true'); }
+  else $('chat-form').removeAttribute('aria-busy');
+}
+function resetDjView() {
+  djEpoch += 1;
+  cancelSegment();
+  musicRequest += 1;
+  speechRequest += 1;
+  activeTrack = null;
+  loadingTrack = false;
+  queueFinished = false;
+  fading = false;
+  outro = null;
+  speakingMessageId = null;
+  lyric = { trackId: null, status: 'idle', lines: [] };
+  for (const audio of [music, speech]) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
+  previewStartMs = 0;
+  $('elapsed').textContent = '0:00';
+  $('duration').textContent = '0:00';
+  $('seek').value = 0;
+  $('seek').style.background = '';
+  $('seek').disabled = true;
+  $('preview-badge').hidden = true;
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+  setNotice('');
+  lastStateFingerprint = '';
+}
+async function selectDj(djId) {
+  if (selectingDj) return;
+  if (djId === state.djId) { $('dj-dialog').close(); return; }
+  selectingDj = true;
+  $('dj-switch-status').textContent = '正在切换…';
+  renderDjList();
+  try {
+    applyState(await post('/api/dj/select', { djId }));
+    $('dj-dialog').close();
+    $('chat-input').focus({ preventScroll: true });
+  } catch (error) { $('dj-switch-status').textContent = error.message; }
+  finally { selectingDj = false; renderDjList(); }
 }
 
 function updateClock() {
@@ -255,20 +356,43 @@ async function refreshStatus(showFeedback = false) {
 
 function applyState(next) {
   if (!next || typeof next !== 'object') return;
+  const changedDj = typeof next.djId === 'string' && next.djId !== state.djId;
+  if (changedDj) {
+    if (state.djId) djViews.set(state.djId, { draft: $('chat-input').value, historyOpen, scrollTop: libraryOpen ? chatScrollBeforeLibrary : $('conversation-scroll').scrollTop });
+    resetDjView();
+    state.djId = next.djId;
+    const view = djViews.get(state.djId);
+    $('chat-input').value = view?.draft || '';
+    historyOpen = Boolean(view?.historyOpen);
+    chatScrollBeforeLibrary = view?.scrollTop || 0;
+    setLibraryOpen(false);
+    if ($('profile-dialog').open) $('profile-dialog').close();
+    syncChatRequest();
+  }
+  if (Array.isArray(next.djs)) state.djs = next.djs;
+  renderDj();
   if (Array.isArray(next.messages)) {
     state.messages = next.messages;
-    if (pendingUser && next.messages.some(message => message.role === 'user' && message.content === pendingUser.content && !pendingUser.previousIds.has(message.id))) pendingUser = null;
+    if (pendingUser && next.messages.some(message => message.role === 'user' && message.content === pendingUser.content && !pendingUser.previousIds.has(message.id))) {
+      pendingUser = null;
+      const work = chatRequests.get(state.djId);
+      if (work) work.pendingUser = null;
+    }
   }
   if (Array.isArray(next.queue)) state.queue = normalizeTracks(next.queue);
   if (typeof next.taste === 'string') state.taste = next.taste;
   if (next.nowPlayingId !== undefined) state.nowPlayingId = next.nowPlayingId === null ? null : String(next.nowPlayingId);
   if (!activeTrack && state.queue.length) {
     activeTrack = state.queue.find(track => track.id === state.nowPlayingId) || state.queue[0];
-    renderNowPlaying();
   }
+  renderNowPlaying();
   renderQueue();
   renderMessages();
   updateTransport();
+  if (changedDj) {
+    const epoch = djEpoch;
+    requestAnimationFrame(() => { if (epoch === djEpoch) $('conversation-scroll').scrollTop = djViews.get(state.djId)?.scrollTop ?? $('conversation-scroll').scrollHeight; });
+  }
 }
 
 function makeTrackRow(track, index, mode = 'queue') {
@@ -322,7 +446,7 @@ function renderQueue() {
   $('queue-count').textContent = state.queue.length;
   $('show-favorites').textContent = remote ? '收藏 · 网易云' : '收藏';
   $('queue-tab').classList.toggle('active', !showingFavorites);
-  $('queue-empty').firstElementChild.textContent = !showingFavorites ? '队列还空着。告诉 Bob 你想听什么，或自己找一首。'
+  $('queue-empty').firstElementChild.textContent = !showingFavorites ? `队列还空着。告诉 ${currentDj().name} 你想听什么，或自己找一首。`
     : !remote ? '还没有收藏。播放喜欢的歌时，点击爱心保存。'
       : remoteFavoritesState === 'loading' ? '正在读取你在网易云的红心歌曲…'
         : remoteFavoritesState === 'error' ? '网易云红心歌曲暂时没读到，稍后再打开收藏试试。'
@@ -376,12 +500,12 @@ function makeBobMessage(message, old) {
   const article = node('article', `msg-bob${old ? ' old' : ''}`);
   article.dataset.id = message.id;
   const head = node('div', 'msg-head');
-  head.append(node('strong', '', 'Bob'), node('time', '', timeLabel(message.createdAt)));
+  head.append(node('strong', '', currentDj().name), node('time', '', timeLabel(message.createdAt)));
   if (message.content) {
     const replay = node('button', 'mini-button');
     replay.type = 'button';
     replay.title = '重播';
-    replay.setAttribute('aria-label', '重播 Bob 这段');
+    replay.setAttribute('aria-label', `重播 ${currentDj().name} 这段`);
     replay.append(icon('sound'));
     replay.addEventListener('click', async () => {
       replay.disabled = true;
@@ -406,7 +530,7 @@ function makeBobMessage(message, old) {
 }
 function renderMessages() {
   const activeId = stageVisible() ? activeTrack.id : '';
-  const fingerprint = JSON.stringify([state.messages, pendingUser?.id, activeId, historyOpen]);
+  const fingerprint = JSON.stringify([state.djId, state.messages, pendingUser?.id, activeId, historyOpen]);
   if (fingerprint === lastStateFingerprint) return;
   lastStateFingerprint = fingerprint;
   const container = $('messages');
@@ -457,7 +581,8 @@ function renderMessages() {
     container.append(set);
   }
   renderDisplay();
-  if (wasNearBottom || pendingUser) requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+  const epoch = djEpoch;
+  if (wasNearBottom || pendingUser) requestAnimationFrame(() => { if (epoch === djEpoch) scroll.scrollTop = scroll.scrollHeight; });
 }
 // The on-air display: what Bob is saying right now, otherwise the current lyric.
 // Fish Audio gives no word timings, so speech time is shared out by clause length.
@@ -508,13 +633,13 @@ function renderDisplay() {
       reached += parts[i].length;
       if (reached / total > fraction) { index = i; break; }
     }
-    setDisplay('BOB · ON AIR', parts[index - 1] || '', parts[index] || '', '', parts[index + 1] || '', 'speech');
+    setDisplay(`${currentDj().name.toUpperCase()} · ON AIR`, parts[index - 1] || '', parts[index] || '', '', parts[index + 1] || '', 'speech');
     return;
   }
-  if (speaking) { setDisplay('BOB · ON AIR', '', 'Bob 正在说…', '', '', 'speech'); return; }
+  if (speaking) { setDisplay(`${currentDj().name.toUpperCase()} · ON AIR`, '', `${currentDj().name} 正在说…`, '', '', 'speech'); return; }
   const playing = !music.paused && !music.ended;
   if (chatBusy && !playing) {
-    setDisplay('BOB · 选歌中', '', 'Bob 在挑歌…', pendingUser?.content ? `「${pendingUser.content}」` : '', '', 'busy');
+    setDisplay(`${currentDj().name.toUpperCase()} · 选歌中`, '', `${currentDj().name} 在挑歌…`, pendingUser?.content ? `「${pendingUser.content}」` : '', '', 'busy');
     return;
   }
   if (activeTrack && stageVisible()) {
@@ -534,12 +659,14 @@ function renderDisplay() {
     setDisplay(hints[current.status] ? `NOW PLAYING · ${hints[current.status]}` : 'NOW PLAYING', '', activeTrack.title, meta, '', 'track');
     return;
   }
-  setDisplay('RADIO BOB', '', '今天想听点什么？', '一种心情，一个场景，或一首喜欢的歌。', '', 'idle');
+  setDisplay((currentDj().stationName || currentDj().name).toUpperCase(), '', '今天想听点什么？', '一种心情，一个场景，或一首喜欢的歌。', '', 'idle');
 }
 
 async function addTracks(tracks, mode = 'append') {
+  const epoch = djEpoch;
   try {
     const result = await post('/api/queue', { tracks, mode });
+    if (epoch !== djEpoch) return false;
     state.queue = normalizeTracks(result.queue);
     if (!activeTrack && state.queue.length) {
       activeTrack = state.queue[0];
@@ -548,7 +675,7 @@ async function addTracks(tracks, mode = 'append') {
     renderQueue();
     updateTransport();
     return true;
-  } catch (error) { toast(error.message); return false; }
+  } catch (error) { if (epoch === djEpoch) toast(error.message); return false; }
 }
 function renderNowPlaying() {
   renderStage();
@@ -580,7 +707,11 @@ function updateTransport() {
   document.body.classList.toggle('is-playing', playing);
   document.body.classList.toggle('is-speaking', speaking);
   renderAirStatus();
-  $('profile-air').textContent = playing || speaking ? 'LIVE' : 'IDLE';
+  const profileAir = $('profile-air');
+  const live = playing || speaking;
+  const profileAirLabel = live ? '播出中' : '待机';
+  if (profileAir.textContent !== profileAirLabel) profileAir.textContent = profileAirLabel;
+  profileAir.toggleAttribute('data-live', live);
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = playing ? 'playing' : activeTrack ? 'paused' : 'none';
   renderStage();
 }
@@ -591,8 +722,8 @@ function renderAirStatus() {
   const index = state.queue.findIndex(track => track.id === activeTrack?.id);
   const position = index >= 0 && state.queue.length > 1 ? ` · ${index + 1} / ${state.queue.length}` : '';
   $('air-label').textContent = eventsStarted && !document.body.classList.contains('connected') ? '连接中断，正在重连…'
-    : chatBusy ? 'Bob 在选歌…'
-      : speaking ? 'Bob 正在说…'
+    : chatBusy ? `${currentDj().name} 在选歌…`
+      : speaking ? `${currentDj().name} 正在说…`
         : loadingTrack ? '正在准备…'
           : playing ? `放歌中${position}`
             : queueFinished ? '这一组放完了'
@@ -610,7 +741,7 @@ function updateMusicVolume() {
   music.volume = Math.min(1, Math.max(0, userVolume * (!speech.paused && !speech.ended ? 0.22 : 1)));
 }
 async function reportPlayer(action) {
-  if (!activeTrack) return;
+  if (!activeTrack || !music.getAttribute('src')) return;
   try { await post('/api/player', { action, trackId: activeTrack.id, positionMs: Math.round((music.currentTime || 0) * 1000) }); }
   catch { /* A reporting failure must not interrupt audio. */ }
 }
@@ -721,9 +852,11 @@ function fadeOutMusic(duration = 700) {
   return new Promise(resolve => {
     const startVolume = music.volume;
     const began = performance.now();
+    const epoch = djEpoch;
     fading = true;
     // Timers keep running in a background tab, unlike animation frames.
     const step = () => {
+      if (epoch !== djEpoch) { resolve(); return; }
       const progress = Math.min(1, (performance.now() - began) / duration);
       music.volume = startVolume * (1 - progress);
       if (progress < 1 && !music.paused) { setTimeout(step, 40); return; }
@@ -788,8 +921,10 @@ function requestOutro() {
   const key = outroKey();
   if (!last || chatBusy || outro?.key === key) return;
   const entry = { key, spoken: false };
+  const epoch = djEpoch;
   outro = entry;
   entry.promise = post('/api/dj/outro', { lastTrackId: last.id }, { timeout: 190000 }).then(result => {
+    if (epoch !== djEpoch) return null;
     entry.result = result;
     if (result.message && !state.messages.some(message => message.id === result.message.id)) {
       state.messages.push(result.message);
@@ -807,15 +942,15 @@ async function handleQueueEnd() {
   if (!state.queue.length) return;
   requestOutro();
   const entry = outro;
-  if (!entry) { setNotice('这一轮听完了。和 Bob 再聊聊，续上下一段音乐。'); return; }
-  setNotice('这一组听完了，Bob 正在想下一段…');
+  if (!entry) { setNotice(`这一轮听完了。和 ${currentDj().name} 再聊聊，续上下一段音乐。`); return; }
+  setNotice(`这一组听完了，${currentDj().name} 正在想下一段…`);
   const result = await entry.promise;
   if (token !== segmentToken || !queueFinished || outro !== entry) return;
-  if (!result) { setNotice('这一轮听完了。和 Bob 再聊聊，续上下一段音乐。'); return; }
+  if (!result) { setNotice(`这一轮听完了。和 ${currentDj().name} 再聊聊，续上下一段音乐。`); return; }
   renderQuickReplies();
   setNotice(result.tracks?.length
-    ? 'Bob 准备了下一组：点「好，接着放」或回复「好」就开始，也可以直接告诉他想听什么。'
-    : '这一轮听完了。和 Bob 再聊聊，续上下一段音乐。');
+    ? `${currentDj().name} 准备了下一组：点「好，接着放」或回复「好」就开始，也可以直接告诉对方想听什么。`
+    : `这一轮听完了。和 ${currentDj().name} 再聊聊，续上下一段音乐。`);
   const url = result.speech?.url || result.message?.speechUrl;
   if (autoVoice && url && !entry.spoken) {
     entry.spoken = true;
@@ -832,13 +967,13 @@ async function playSpeech(url, messageId = null) {
   try { await speech.play(); return request === speechRequest; }
   catch (error) {
     if (request !== speechRequest) return false;
-    if (error.name === 'NotAllowedError') { toast('口播已生成，点 Bob 那段话旁边的重播就能听。'); return false; }
+    if (error.name === 'NotAllowedError') { toast(`口播已生成，点 ${currentDj().name} 那段话旁边的重播就能听。`); return false; }
     throw new Error('口播音频未能播放，请稍后重试。');
   }
 }
 function updateSpeechState() {
   const playing = !speech.paused && !speech.ended;
-  $('voice-label').textContent = playing ? 'Bob 正在说话…' : voiceLabel();
+  $('voice-label').textContent = playing ? `${currentDj().name} 正在说话…` : voiceLabel();
   updateMusicVolume();
   updateTransport();
 }
@@ -912,6 +1047,10 @@ async function sendMessage(event) {
   event?.preventDefault();
   const content = $('chat-input').value.trim();
   if (!content || chatBusy) return;
+  const djId = state.djId;
+  const epoch = djEpoch;
+  const work = { pendingUser: null, steps: { plan: 'active' } };
+  chatRequests.set(djId, work);
   chatBusy = true;
   renderAirStatus();
   const playerState = currentPlayerState();
@@ -919,6 +1058,7 @@ async function sendMessage(event) {
   if (queueFinished) { cancelSegment(); speechRequest += 1; speech.pause(); }
   const voiceRequest = speechRequest;
   pendingUser = { id: `pending-${Date.now()}`, role: 'user', content, createdAt: new Date().toISOString(), previousIds: new Set(state.messages.map(message => message.id)) };
+  work.pendingUser = pendingUser;
   $('chat-input').value = '';
   $('send').disabled = true;
   renderProgress({ plan: 'active' });
@@ -927,17 +1067,24 @@ async function sendMessage(event) {
   $('chat-form').setAttribute('aria-busy', 'true');
   renderMessages();
   try {
-    const result = await post('/api/chat', { message: content, playerState }, { timeout: 190000 });
+    const result = await post('/api/chat', { djId, message: content, playerState }, { timeout: 190000 });
+    if (state.djId !== djId) return;
     if (Array.isArray(result.queue)) state.queue = normalizeTracks(result.queue);
     if (result.message && !state.messages.some(message => message.id === result.message.id)) state.messages.push(result.message);
-    try { applyState(await api('/api/state', { timeout: 15000 })); }
+    try {
+      const latest = await api('/api/state', { timeout: 15000 });
+      if (state.djId !== djId) return;
+      if (latest.djId === djId) applyState(latest);
+    }
     catch {
       if (pendingUser) state.messages.splice(Math.max(0, state.messages.length - 1), 0, { ...pendingUser, previousIds: undefined });
     }
     pendingUser = null;
+    work.pendingUser = null;
     renderMessages();
     renderQueue();
     updateTransport();
+    if (epoch !== djEpoch) return;
     if (result.control) {
       if (result.control.action === 'next') await moveTrack(1);
       else if (result.control.action === 'previous') await moveTrack(-1);
@@ -956,18 +1103,26 @@ async function sendMessage(event) {
       }
     }
   } catch (error) {
+    if (state.djId !== djId) {
+      const view = djViews.get(djId) || {};
+      if (!view.draft) view.draft = content;
+      djViews.set(djId, view);
+      return;
+    }
     pendingUser = null;
+    work.pendingUser = null;
     if (!$('chat-input').value) $('chat-input').value = content;
     renderMessages();
     toast(error.message);
   } finally {
-    chatBusy = false;
-    renderAirStatus();
-    $('send').disabled = false;
-    $('thinking').hidden = true;
-    renderQuickReplies();
-    $('chat-form').removeAttribute('aria-busy');
-    $('chat-input').focus({ preventScroll: true });
+    chatRequests.delete(djId);
+    if (state.djId === djId) {
+      syncChatRequest();
+      renderAirStatus();
+      renderQuickReplies();
+      renderMessages();
+      if (epoch === djEpoch) $('chat-input').focus({ preventScroll: true });
+    }
   }
 }
 
@@ -1020,7 +1175,7 @@ async function saveTaste(event) {
     const result = await api('/api/taste', { method: 'PUT', body: JSON.stringify({ text: $('taste-input').value }) });
     state.taste = result.text || '';
     $('taste-dialog').close();
-    toast('记住了。Bob 之后会参考你的音乐品味。');
+    toast('记住了。DJ 之后会参考你的音乐品味。');
   } catch (error) { toast(error.message); }
   finally { $('save-taste').disabled = false; }
 }
@@ -1156,7 +1311,7 @@ music.addEventListener('error', () => {
 });
 for (const event of ['play', 'pause', 'ended']) speech.addEventListener(event, updateSpeechState);
 speech.addEventListener('timeupdate', renderDisplay);
-speech.addEventListener('error', () => { speech.pause(); updateSpeechState(); if (speech.getAttribute('src')) toast('口播音频加载失败，可以点击“听 Bob 说”重试。'); });
+speech.addEventListener('error', () => { speech.pause(); updateSpeechState(); if (speech.getAttribute('src')) toast('口播音频加载失败，可以点击对话旁的重播重试。'); });
 $('play').addEventListener('click', togglePlayback);
 $('favorite').addEventListener('click', toggleFavorite);
 $('hide-queue').addEventListener('click', () => setLibraryOpen(false));
@@ -1175,14 +1330,18 @@ $('show-favorites').addEventListener('click', () => {
 $('theme-toggle').addEventListener('click', toggleTheme);
 
 function createProfileDots(dialog) {
+  const hero = dialog.querySelector('.profile-hero');
   const canvas = node('canvas', 'profile-dot-field');
   const context = canvas.getContext('2d');
   if (!context) return { start() {} };
   canvas.setAttribute('aria-hidden', 'true');
-  dialog.prepend(canvas);
-  dialog.classList.add('has-interactive-dots');
+  hero.prepend(canvas);
+  hero.classList.add('has-interactive-dots');
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+  const gap = 14;
+  const base = [145, 136, 174];
+  const highlight = [193, 163, 255];
   const pointer = {
     x: 0, y: 0, targetX: 0, targetY: 0,
     amount: 0, targetAmount: 0, lift: 0, targetLift: 0, movedAt: 0,
@@ -1192,17 +1351,8 @@ function createProfileDots(dialog) {
   let previousTime = 0;
   let width = 0;
   let height = 0;
-  let gap = 18;
-  let base = [135, 147, 143];
-  let highlight = [99, 216, 191];
   let lastPointer = null;
 
-  function readColors() {
-    const style = getComputedStyle(dialog);
-    base = style.getPropertyValue('--profile-dot-base').trim().split(',').map(Number);
-    highlight = style.getPropertyValue('--profile-dot-highlight').trim().split(',').map(Number);
-    gap = parseFloat(style.getPropertyValue('--profile-dot-gap')) || 18;
-  }
   function draw() {
     context.clearRect(0, 0, width, height);
     const influence = Math.min(180, width * 0.4);
@@ -1273,35 +1423,27 @@ function createProfileDots(dialog) {
   }
   function projectPointer() {
     if (!lastPointer) return;
-    const box = dialog.getBoundingClientRect();
-    const x = lastPointer.x - box.left - dialog.clientLeft;
-    const y = lastPointer.y - box.top - dialog.clientTop;
-    if (x < 0 || x > dialog.clientWidth || y < 0 || y > dialog.clientHeight) { release(); return; }
-    const contentY = y + dialog.scrollTop;
+    const box = hero.getBoundingClientRect();
+    const x = lastPointer.x - box.left;
+    const y = lastPointer.y - box.top;
+    if (x < 0 || x > width || y < 0 || y > height) { release(); return; }
     if (pointer.targetAmount === 0 && pointer.amount < 0.01) {
       pointer.x = x;
-      pointer.y = contentY;
+      pointer.y = y;
     }
     pointer.targetX = x;
-    pointer.targetY = contentY;
+    pointer.targetY = y;
     pointer.targetAmount = 1;
     wake();
   }
   function resize() {
     if (!active || !dialog.open) return;
-    const scrollTop = dialog.scrollTop;
-    // Ignore the previous canvas size when measuring scrollable content.
-    canvas.style.height = '0px';
-    width = dialog.clientWidth;
-    height = Math.max(dialog.clientHeight, dialog.scrollHeight);
+    width = hero.clientWidth;
+    height = hero.clientHeight;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.style.width = `${width}px`;
-    canvas.style.height = `${height}px`;
     canvas.width = Math.round(width * ratio);
     canvas.height = Math.round(height * ratio);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
-    dialog.scrollTop = scrollTop;
-    readColors();
     projectPointer();
     draw();
   }
@@ -1314,7 +1456,7 @@ function createProfileDots(dialog) {
     pointer.amount = pointer.targetAmount = 0;
     pointer.lift = pointer.targetLift = pointer.movedAt = 0;
   }
-  dialog.addEventListener('pointermove', event => {
+  hero.addEventListener('pointermove', event => {
     if (!active || reducedMotion.matches || event.pointerType !== 'mouse') return;
     const previousPointer = lastPointer;
     lastPointer = { x: event.clientX, y: event.clientY };
@@ -1325,8 +1467,8 @@ function createProfileDots(dialog) {
       wake();
     }
   }, { passive: true });
-  dialog.addEventListener('pointerleave', release, { passive: true });
-  dialog.addEventListener('pointercancel', release, { passive: true });
+  hero.addEventListener('pointerleave', release, { passive: true });
+  hero.addEventListener('pointercancel', release, { passive: true });
   dialog.addEventListener('scroll', projectPointer, { passive: true });
   dialog.addEventListener('close', stop);
   window.addEventListener('blur', release);
@@ -1355,9 +1497,7 @@ function createProfileDots(dialog) {
       if (active) draw();
     }
   });
-  new ResizeObserver(resize).observe(dialog);
-  new MutationObserver(() => { if (active) { readColors(); draw(); } })
-    .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+  new ResizeObserver(resize).observe(hero);
   return {
     start() {
       stop();
@@ -1367,10 +1507,15 @@ function createProfileDots(dialog) {
   };
 }
 const profileDots = createProfileDots($('profile-dialog'));
+for (const button of document.querySelectorAll('.dj-open')) button.addEventListener('click', () => {
+  if ($('profile-dialog').open) $('profile-dialog').close();
+  $('dj-switch-status').textContent = '';
+  renderDjList();
+  $('dj-dialog').showModal();
+});
 for (const button of document.querySelectorAll('.profile-open')) button.addEventListener('click', () => {
   const tags = [...new Set(state.taste.split(/[\n,，、;；]/).map(item => item.replace(/^[\s#*\-\d.]+/, '').trim()).filter(item => item && item.length <= 24))].slice(0, 9);
-  $('profile-genres').textContent = tags.length || '—';
-  $('profile-genres-tags').replaceChildren(...(tags.length ? tags.map(tag => node('span', 'genre-tag', tag)) : [node('span', 'profile-empty-taste', '还没有品味资料，告诉 Bob 你喜欢什么。')]));
+  $('profile-genres-tags').replaceChildren(...(tags.length ? tags.map(tag => node('span', 'genre-tag', tag)) : [node('span', 'profile-empty-taste', `还没有品味资料，告诉 ${currentDj().name} 你喜欢什么。`)]));
   $('profile-dialog').showModal();
   profileDots.start();
 });
@@ -1438,8 +1583,12 @@ async function start() {
       try { applyState(JSON.parse(event.data)); } catch { /* Ignore malformed transient event. */ }
     });
     events.addEventListener('progress', event => {
-      if (!chatBusy) return;
-      try { renderProgress(JSON.parse(event.data)); } catch { /* Ignore malformed transient event. */ }
+      try {
+        const progress = JSON.parse(event.data);
+        const work = chatRequests.get(progress.djId);
+        if (work) work.steps = progress;
+        if (chatBusy && progress.djId === state.djId) renderProgress(progress);
+      } catch { /* Ignore malformed transient event. */ }
     });
     events.addEventListener('open', () => {
       document.body.classList.add('connected');

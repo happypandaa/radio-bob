@@ -79,7 +79,7 @@ test('only two keys produce DeepSeek and Fish requests with the default models a
     assert.equal(url, 'https://api.fish.audio/v1/tts');
     assert.equal(options.headers.Authorization, `Bearer ${env.FISH_API_KEY}`);
     assert.equal(options.headers.model, 's2.1-pro-free');
-    assert.equal(body.reference_id, 'c420d0f2a92243ee8864f5e8a3de1d9e');
+    assert.equal(body.reference_id, '830a0ce606794c01bfff33971aeab632');
     return new Response('ID3artificial-test-audio', { headers: { 'Content-Type': 'audio/mpeg' } });
   });
   const request = await application(t, env);
@@ -104,7 +104,7 @@ test('managed updates ignore obsolete saved endpoint, model and voice options', 
   t.mock.method(globalThis, 'fetch', async (url, options) => {
     assert.equal(url, 'https://api.fish.audio/v1/tts');
     assert.equal(options.headers.model, 's2.1-pro-free');
-    assert.equal(JSON.parse(options.body).reference_id, 'c420d0f2a92243ee8864f5e8a3de1d9e');
+    assert.equal(JSON.parse(options.body).reference_id, '830a0ce606794c01bfff33971aeab632');
     return new Response('ID3artificial-test-audio', { headers: { 'Content-Type': 'audio/mpeg' } });
   });
   const request = await application(t, {

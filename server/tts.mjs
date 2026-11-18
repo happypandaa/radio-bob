@@ -5,7 +5,7 @@ import path from 'node:path';
 const LOCAL_FAILURE = Symbol('fish-failure');
 const MAX_AUDIO_BYTES = 20_000_000;
 const TIMEOUT_MS = 60_000;
-const DEFAULT_REFERENCE_ID = 'c420d0f2a92243ee8864f5e8a3de1d9e'; // 沉静青年
+const DEFAULT_REFERENCE_ID = '830a0ce606794c01bfff33971aeab632'; // 平静从容的讲述者
 
 const MODELS = new Set(['s1', 's2-pro', 's2.1-pro', 's2.1-pro-free', 'drama-3']);
 

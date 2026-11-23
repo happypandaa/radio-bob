@@ -238,6 +238,8 @@ function applyTheme() {
   const theme = saved === 'light' || saved === 'dark' ? saved : systemDark.matches ? 'dark' : 'light';
   document.documentElement.dataset.theme = theme;
   $('theme-toggle').setAttribute('aria-label', theme === 'dark' ? '切换到日间模式' : '切换到夜间模式');
+  const themeText = $('theme-toggle').querySelector('.theme-text');
+  if (themeText) themeText.textContent = theme === 'dark' ? '日间模式' : '夜间模式';
 }
 function toggleTheme() {
   savePreference('radio-bob-theme-v2', document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
@@ -679,6 +681,7 @@ async function addTracks(tracks, mode = 'append') {
 }
 function renderNowPlaying() {
   renderStage();
+  document.body.classList.toggle('has-track', Boolean(activeTrack));
   $('current-title').textContent = activeTrack?.title || '今天想听点什么？';
   $('current-artist').textContent = activeTrack ? trackMeta(activeTrack) : '一种心情，一个场景，或一首喜欢的歌。';
   const cover = activeTrack?.cover;

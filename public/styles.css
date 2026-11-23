@@ -355,3 +355,108 @@ body.is-playing .eq i{animation:eq 1s ease-in-out infinite}
 ::-webkit-scrollbar-track{background:transparent}
 @media(max-width:560px){.profile-settings{font-size:10px}.service-status{gap:15px;font-size:9px}}
 :root[data-theme=light] .profile-settings{color:#737d74;border-color:#dcdfdc}
+
+/* ---- Compact window ----
+   Sized for a ~420×700 window: fixed type instead of dvh scaling, one headline,
+   fewer header items, flatter padding. */
+.on-air{padding-bottom:30px}
+.station-header{padding:14px 16px 0;gap:10px}
+.brand-avatar{width:34px;height:34px}
+.station-id{gap:3px}
+.station-id .dot-name{font-size:19px}
+.air-status{font-size:11px;gap:6px}
+.status-dot{width:6px;height:6px}
+.header-actions{gap:2px}
+.header-clock{display:none}
+.on-air-badge{height:22px;padding:0 8px;margin-right:2px;gap:6px;font-size:9.5px;letter-spacing:1.1px}
+.on-air-dot{width:6px;height:6px}
+.bar-button{width:30px;height:30px}
+.bar-button .icon{width:16px;height:16px}
+.login-button{height:24px;padding:0 9px;margin-left:2px;font-size:9.5px}
+
+.display{padding:14px 20px 0;min-height:118px;gap:4px}
+.display-label{font-size:9.5px;letter-spacing:1.6px}
+.display-prev,.display-next{font-size:13px;line-height:1.5}
+.display-now{font-size:21px;line-height:1.35;letter-spacing:-.2px}
+.display-sub{font-size:13px}
+.strip{padding:10px 20px 10px;gap:10px}
+.mini-bars{height:11px}
+.strip-label{font-size:10px}
+
+.sheet{margin-top:-22px;border-radius:20px 20px 0 0;gap:10px;padding:16px 12px 12px}
+.now{padding:0 8px;display:none}
+body.has-track .now{display:block}
+.now h1{font-size:17px;line-height:1.3;font-weight:700;letter-spacing:0;-webkit-line-clamp:1}
+.now-meta{margin-top:1px;font-size:12px}
+.transport{gap:10px;padding:0 4px 0 8px}
+.play-button{width:32px;height:32px}
+.play-button .icon{width:13px;height:13px}
+.play-button:disabled{background:var(--track);color:var(--fade-2);opacity:1}
+.ghost-button{width:32px;height:32px}
+.ghost-button .icon{width:15px;height:15px}
+.time{font-size:10.5px}
+.player-notice{margin-top:-4px;padding:0 8px;font-size:11px}
+
+.stream{gap:8px;padding:6px;border-radius:18px;background-size:14px 14px}
+.stream-scroll{padding:6px 2px 2px}
+.stream-body{gap:10px}
+.chat-empty{display:none}
+.messages{gap:12px}
+.msg-user{padding:0 6px;font-size:12px}
+.msg-bob{gap:4px}
+.msg-head{height:20px;padding:0 6px}
+.msg-head strong,.msg-head time{font-size:11px}
+.bob-text{padding:0 6px;font-size:14px;line-height:1.7}
+.msg-note{padding:0 6px;font-size:11px}
+.set-row{gap:10px;min-height:36px;padding:0 8px;border-radius:10px}
+.row-num{width:16px;font-size:10.5px}
+.row-title{font-size:13.5px}
+.row-meta{font-size:11.5px;margin-left:8px}
+.row-time{font-size:10.5px}
+.set-row.set-active{min-height:40px;padding:0 2px 0 8px;border-radius:12px}
+.eq{width:16px;height:12px}
+.favorite-button{width:30px;height:30px}
+.favorite-button .icon{width:14px;height:14px}
+.msg-bob.old .bob-text{font-size:12.5px}
+.history-toggle{height:24px;font-size:11px}
+.thinking{padding:0 6px;font-size:11px}
+.quick-replies{padding:0 6px;gap:5px}
+.quick-reply{height:28px;padding:0 11px;font-size:12px}
+.chat-form{gap:6px;padding:3px 3px 3px 14px;border-radius:20px}
+.chat-form textarea{height:20px;max-height:80px;margin:9px 0;font-size:13.5px;line-height:20px}
+.send-button{width:34px;height:34px}
+.send-button .icon{width:16px;height:16px}
+
+.library-tab{height:26px;padding:0 10px;font-size:12px}
+.library-close{height:26px;font-size:11px}
+.track-row{min-height:42px;padding:3px 6px;gap:8px}
+.track-thumb{width:30px;height:30px}
+.track-info strong{font-size:13px}
+.track-info small{font-size:11px}
+.search-form input,.search-form button{height:34px;font-size:13px}
+
+/* Theme switch now lives in the profile panel. */
+.profile-action.theme-action .icon{width:15px;height:15px}
+
+/* Very short windows: lyrics context goes first. */
+@media(max-height:540px){
+ .display{min-height:0;padding-top:8px}
+ .display-prev,.display-next{display:none}
+}
+/* Narrow windows: the badge text yields before the station name does. */
+@media(max-width:380px){
+ .on-air-badge{width:22px;padding:0;justify-content:center}
+ .on-air-badge #on-air-text{display:none}
+}
+.modal{padding:28px 24px;width:min(440px,calc(100% - 24px))}
+.profile-modal{padding:0}
+/* Idle: no player, no empty card — the display already asks the question. */
+body:not(.has-track) .transport{display:none}
+.stream:has(.chat-empty:not([hidden])):not(:has(#library-body:not([hidden]))){background:none;padding-inline:0}
+/* The badge only lights up on air; standby is already said under the name. */
+.on-air-badge:not(.live){display:none}
+.stream:has(.chat-empty:not([hidden])):not(:has(#library-body:not([hidden]))) .chat-form{background:var(--card)}
+/* The base sheet hides both lyric context lines at 600px; here only the past line yields first. */
+.display-prev,.display-next{display:block}
+@media(max-height:640px){.display-prev{display:none}}
+@media(max-height:540px){.display-next{display:none}}
